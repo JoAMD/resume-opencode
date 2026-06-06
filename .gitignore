@@ -1,0 +1,11 @@
+.env
+.env.local
+dist/
+node_modules/
+logs/
+*.log
+jobs/
+prompts/
+templates
+templates/
+scripts/

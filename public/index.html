@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resume Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Resume Generator</h1>
+    <p class="subtitle">Generate a tailored resume from a full job description, or from role title only when needed.</p>
+
+    <form id="resume-form">
+      <div class="field">
+        <label for="seek-input">Paste SEEK job listing here to auto-fill</label>
+        <textarea id="seek-input" rows="4" placeholder="Paste full SEEK job listing (select all from mobile app)..."></textarea>
+        <button type="button" id="auto-fill-btn" class="button button-small">Auto-fill from SEEK</button>
+      </div>
+
+      <div class="field">
+        <label for="resumeType">Resume Type</label>
+        <select id="resumeType">
+          <option value="software" selected>Software Engineer</option>
+          <option value="qa">QA Engineer</option>
+        </select>
+      </div>
+
+      <div class="row two-col">
+        <div class="field">
+          <label for="companyName">Company Name</label>
+          <input type="text" id="companyName" placeholder="e.g. Shopify" required />
+        </div>
+        <div class="field">
+          <label for="roleName">Role / Title</label>
+          <input type="text" id="roleName" placeholder="e.g. Senior Software Engineer" required />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="jobDescription">Job Description <span class="optional">(optional if using role-title-only mode)</span></label>
+        <textarea id="jobDescription" rows="14" placeholder="Paste the full job description here..."></textarea>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-label" for="noJdMode">
+          <input type="checkbox" id="noJdMode" />
+          Generate based on role title only (skip JD analysis)
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="extraNotes">Extra Notes <span class="optional">(optional)</span></label>
+        <textarea id="extraNotes" rows="4" placeholder="Any specific points to highlight, skills to emphasise, tone instructions..."></textarea>
+      </div>
+
+<div class="field">
+      <label for="modelPreference">Model Mode</label>
+      <select id="modelPreference">
+        <option value="auto" selected>Auto (default)</option>
+        <option value="non-premium">Non-premium only</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="model-select">Model</label>
+      <select id="model-select">
+        <option value="opencode/gpt-5-nano">gpt-5-nano</option>
+        <option value="opencode/minimax-m2.5-free">minimax-m2.5-free</option>
+        <option value="opencode/big-pickle">big-pickle</option>
+        <option value="opencode/hy3-preview-free">hy3-preview-free</option>
+        <option value="opencode/nemotron-3-super-free">nemotron-3-super-free</option>
+        <option value="opencode-go/minimax-m2.5" selected>minimax-m2.5 (opencode-go)</option>
+        <option value="opencode-go/minimax-m2.7">minimax-m2.7 (opencode-go)</option>
+        <option value="opencode-go/kimi-k2.5">kimi-k2.5 (opencode-go)</option>
+        <option value="opencode-go/kimi-k2.6">kimi-k2.6 (opencode-go)</option>
+        <option value="opencode-go/glm-5.1">glm-5.1 (opencode-go)</option>
+        <option value="opencode-go/mimo-v2.5">mimo-v2.5 (opencode-go)</option>
+        <option value="opencode-go/mimo-v2.5-pro">mimo-v2.5-pro (opencode-go)</option>
+        <option value="opencode-go/deepseek-v4-flash">deepseek-v4-flash (opencode-go)</option>
+        <option value="opencode-go/qwen3.5-plus">qwen3.5-plus (opencode-go)</option>
+        <option value="opencode-go/qwen3.6-plus">qwen3.6-plus (opencode-go)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="cover-output">Cover Letter Output</label>
+      <select id="cover-output">
+        <option value="pdf">PDF (also saves LaTeX)</option>
+        <option value="txt" selected>TXT only</option>
+      </select>
+    </div>
+
+      <div class="field">
+        <label class="checkbox-label" for="lowTokenMode">
+          <input type="checkbox" id="lowTokenMode" />
+          Low-token test mode (faster and cheaper, lower quality)
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-label" for="useStarMethodForGovtRoles">
+          <input type="checkbox" id="useStarMethodForGovtRoles" />
+          STAR method for government cover letters
+        </label>
+      </div>
+
+      <button type="submit" id="submit-btn" class="button">Generate Resume + Cover Letter</button>
+      <button type="button" id="resume-only-btn" class="button button-secondary">Generate Resume Only</button>
+
+      <div class="field">
+        <label for="folderPath">Folder Path <span class="optional">(optional, for compile/structured actions)</span></label>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="folderPath" value="" style="flex: 1;" />
+          <button type="button" id="copy-path-btn" class="button button-small" title="Copy path">Copy</button>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button type="button" id="generate-cover-letter-btn" class="button button-secondary">Generate Cover Letter</button>
+        <button type="button" id="compile-last-tex-btn" class="button button-secondary">Compile Last Tex</button>
+        <button type="button" id="compile-folder-tex-btn" class="button button-secondary">Compile Folder Tex</button>
+        <button type="button" id="generate-tex-structured-btn" class="button button-secondary">Generate TeX from Structured</button>
+        <button type="button" id="run-ats-analysis-btn" class="button button-secondary">Run ATS Analysis</button>
+        <button type="button" id="mark-applied-btn" class="button button-secondary">Mark as Applied</button>
+      </div>
+    </form>
+
+    <div id="status" class="status hidden"></div>
+
+    <div id="result" class="result hidden">
+      <p>✅ Resume generated!</p>
+      <a id="pdf-link" href="#" target="_blank">Open PDF</a>
+      <span id="job-folder" class="folder-path"></span>
+    </div>
+  </div>
+
+  <script>
+    // Resume type selection - persist in sessionStorage
+    const resumeTypeSelect = document.getElementById('resumeType');
+    const savedResumeType = sessionStorage.getItem('resumeType');
+    if (savedResumeType) {
+      resumeTypeSelect.value = savedResumeType;
+    }
+    resumeTypeSelect.addEventListener('change', () => {
+      sessionStorage.setItem('resumeType', resumeTypeSelect.value);
+    });
+
+    // Audio context for notification sound
+    let audioCtx = null;
+
+    function playSuccessSound() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      // Pleasant chime: two notes (C5 -> E5)
+      oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+      oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.15); // E5
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+
+    const form = document.getElementById('resume-form');
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+
+    function parseSeekInput(text) {
+      const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+      let role = '';
+      let company = '';
+      let jobDesc = '';
+      let foundCompany = false;
+      let descriptionStartIndex = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!role && i < 5 && !line.includes('SEEK') && !line.includes('Skip to') && line.length > 2 && line.length < 100) {
+          const lower = line.toLowerCase();
+          if (!lower.includes('view all') && !lower.includes('posted') && !line.match(/^\d+[a-z]+ ago$/)) {
+            role = line;
+          }
+        }
+        if (!company && (line.includes('Pty Ltd') || line.includes('Ltd') || line.includes('Group') || line.length > 3 && line.length < 80)) {
+          const lower = line.toLowerCase();
+          if (lower.includes('pty ltd') || lower.includes(' ltd') || lower.includes('group pty') || (lower.includes('group') && !lower.includes('view all'))) {
+            company = line;
+            foundCompany = true;
+            descriptionStartIndex = i + 1;
+            break;
+          }
+        }
+      }
+      const roleLineIndex = lines.indexOf(role);
+      if (!company && foundCompany === false) {
+        for (let i = 0; i < Math.min(lines.length, 8); i++) {
+          const line = lines[i];
+          if (line === role) continue;
+          if (line && line.length > 3 && line.length < 60 && !line.match(/^(Contract|Temp|FullTime|PartTime|Permanent)/i) && !line.match(/^\$/) && !line.match(/^\d+[a-z]+ ago$/)) {
+            const lower = line.toLowerCase();
+            if (!lower.includes('seek') && !lower.includes('skip') && !lower.includes('view all') && !lower.includes('posted') && !line.match(/^\d+[\d,]* p\.\d/)) {
+              company = line;
+              descriptionStartIndex = i + 1;
+              break;
+            }
+          }
+        }
+      }
+      const descLines = lines.slice(descriptionStartIndex);
+      const skipPhrases = ['About our client', 'About the role', 'Requirements', "What's on offer", 'Report this job', 'Be careful', 'Was this skills match accurate', 'Help us match better', 'We match your skills and credentials', 'Hide all'];
+      let skipAllAfterBankWarning = false;
+      const filteredDesc = descLines.filter(line => {
+        const lower = line.toLowerCase();
+        if (lower.includes('don\'t provide your bank') || lower.includes('credit card details') || lower.includes('learn how to protect yourself')) {
+          skipAllAfterBankWarning = true;
+          return false;
+        }
+        if (skipAllAfterBankWarning) return false;
+        return !skipPhrases.some(phrase => lower.includes(phrase.toLowerCase())) && line.length > 5;
+      });
+      jobDesc = filteredDesc.join('\n\n');
+      return { role: role.replace(/\s+/g, ' ').trim(), company: company.replace(/\s+/g, ' ').trim(), jobDescription: jobDesc.trim() };
+    }
+
+    document.getElementById('auto-fill-btn').addEventListener('click', () => {
+      const input = document.getElementById('seek-input').value;
+      if (!input.trim()) {
+        alert('Please paste a SEEK job listing first');
+        return;
+      }
+      const parsed = parseSeekInput(input);
+      if (parsed.role) document.getElementById('roleName').value = parsed.role;
+      if (parsed.company) document.getElementById('companyName').value = parsed.company;
+      if (parsed.jobDescription) document.getElementById('jobDescription').value = parsed.jobDescription;
+      if (!parsed.role && !parsed.company) {
+        alert('Could not auto-detect role/company. Please fill manually.');
+      }
+    });
+
+    // Main button: Generate Resume + Cover Letter (combined, one AI call)
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await generateResume(e, true);
+    });
+
+    // Resume-only button
+    document.getElementById('resume-only-btn').addEventListener('click', async (e) => {
+      await generateResume(e, false);
+    });
+
+    // Polling helper
+    async function waitForTask(taskId, pollInterval = 8000) {
+      while (true) {
+        const res = await fetch(`/generate/task/${taskId}`);
+        const data = await res.json();
+        if (data.status === 'complete') return data.result;
+        if (data.status === 'error') throw new Error(data.error);
+        await new Promise(r => setTimeout(r, pollInterval));
+      }
+    }
+
+    async function generateResume(e, combined) {
+      const noJdMode = document.getElementById('noJdMode').checked;
+      const jdValue = document.getElementById('jobDescription').value.trim();
+      if (!noJdMode && !jdValue) {
+        status.className = 'status error';
+        status.textContent = 'Please provide a job description or enable role-title-only mode.';
+        return;
+      }
+
+      const btn = combined ? document.getElementById('submit-btn') : document.getElementById('resume-only-btn');
+      btn.disabled = true;
+      btn.textContent = 'Generating…';
+      status.className = 'status';
+      status.textContent = combined
+        ? 'Calling AI (combined resume + cover letter) — this may take 20–40 seconds…'
+        : 'Calling AI for resume only — this may take 20–40 seconds…';
+      result.className = 'result hidden';
+
+      try {
+        const res = await fetch('/generate/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyName: document.getElementById('companyName').value.trim(),
+            roleName: document.getElementById('roleName').value.trim(),
+            jobDescription: jdValue,
+            extraNotes: document.getElementById('extraNotes').value.trim(),
+            generateWithoutJD: noJdMode,
+            modelPreference: document.getElementById('modelPreference').value,
+            lowTokenMode: document.getElementById('lowTokenMode').checked,
+            useCombinedGeneration: combined,
+            coverOutput: document.getElementById('cover-output')?.value || 'pdf',
+            modelSelect: document.getElementById('model-select')?.value,
+            useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
+            resumeType: document.getElementById('resumeType').value,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || `Server error ${res.status}`);
+        }
+
+        // Wait for background task to complete
+        status.textContent = 'Generating resume…';
+        console.log('Initial taskId from POST response:', data.taskId);
+        const result = await waitForTask(data.taskId);
+        console.log('Task completed, result:', result);
+
+        // Show result with resume PDF
+        document.getElementById('pdf-link').href = result.pdfUrl;
+        let folderText = `Saved to: jobs/${result.jobDir}/`;
+        if (result.coverPdfUrl) {
+          folderText += ` | Cover: ${result.coverPdfUrl}`;
+        }
+        document.getElementById('job-folder').textContent = folderText;
+        result.className = 'result';
+        status.className = 'status hidden';
+        playSuccessSound();
+
+        // Store taskId for this tab's subsequent actions
+        console.log('Storing lastTaskId:', data.taskId);
+        lastTaskId = data.taskId;
+        document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
+
+        // Auto-open resume PDF
+        window.open(result.pdfUrl, '_blank');
+        // Optionally open cover letter PDF
+        if (data.coverPdfUrl) {
+          setTimeout(() => window.open(data.coverPdfUrl, '_blank'), 500);
+        }
+      } catch (err) {
+        status.className = 'status error';
+        status.textContent = `Error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = combined ? 'Generate Resume + Cover Letter' : 'Generate Resume Only';
+      }
+    }
+
+    // Cover letter generation
+    document.getElementById('generate-cover-letter-btn').addEventListener('click', async () => {
+      const jobDescription = document.getElementById('jobDescription').value.trim();
+      const coverOutput = document.getElementById('cover-output')?.value || 'pdf';
+      const modelSelect = document.getElementById('model-select')?.value;
+      const useStarMethodForGovtRoles = document.getElementById('useStarMethodForGovtRoles').checked;
+      const folderPath = document.getElementById('folderPath').value.trim();
+      const res = await fetch('/generate/coverLetter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyName: document.getElementById('companyName').value.trim(),
+          roleName: document.getElementById('roleName').value.trim(),
+          jobDescription,
+          coverOutput,
+          modelSelect,
+          useStarMethodForGovtRoles,
+          folderPath,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      playSuccessSound();
+      if (data.pdfUrl) {
+        window.open(data.pdfUrl, '_blank');
+      } else if (data.txtUrl) {
+        window.open(data.txtUrl, '_blank');
+      } else {
+        alert('Cover letter generated (no PDF).');
+      }
+    });
+
+    // Compile last .tex
+    document.getElementById('compile-last-tex-btn').addEventListener('click', async () => {
+      const res = await fetch('/generate/compileLastTex', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      playSuccessSound();
+      window.open(data.pdfUrl, '_blank');
+    });
+
+    // Compile all .tex files in jobs folder or given path
+    document.getElementById('compile-folder-tex-btn').addEventListener('click', async () => {
+      let folderPath = document.getElementById('folderPath').value.trim();
+      if (!folderPath) {
+        folderPath = prompt('Enter folder path containing .tex files (or leave empty for default jobs folder):');
+        if (folderPath === null) return; // cancelled
+      }
+      const res = await fetch('/generate/compileFolderTex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      playSuccessSound();
+      alert('Compiled ' + data.count + ' files');
+    });
+
+    // Generate LaTeX from structured JSON (provide path to structured-output.json or folder)
+    document.getElementById('generate-tex-structured-btn').addEventListener('click', async () => {
+      let structuredPath = document.getElementById('folderPath').value.trim();
+      if (!structuredPath) {
+        structuredPath = prompt('Enter path to structured-output.json or folder containing it:');
+        if (structuredPath === null) return;
+      }
+      const res = await fetch('/generate/latexFromStructured', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structuredPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      playSuccessSound();
+      if (data.txtUrl) {
+        window.open(data.txtUrl, '_blank');
+      }
+      if (data.pdfUrl) {
+        setTimeout(() => window.open(data.pdfUrl, '_blank'), 300);
+      }
+    });
+
+    const folderPathInput = document.getElementById('folderPath');
+
+    async function initConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        globalThis.__JOBS_PATH__ = data.jobsPath;
+        folderPathInput.value = globalThis.__JOBS_PATH__ + '/';
+      } catch (e) {
+        console.error('Failed to load config:', e);
+      }
+    }
+    initConfig();
+
+    // Copy button
+    document.getElementById('copy-path-btn').addEventListener('click', () => {
+      navigator.clipboard.writeText(folderPathInput.value).then(() => {
+        const copyBtn = document.getElementById('copy-path-btn');
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+      });
+    });
+
+    // Append new context to base path instead of replacing
+    folderPathInput.addEventListener('input', (e) => {
+      const currentValue = e.target.value;
+      if (!currentValue.startsWith(globalThis.__JOBS_PATH__)) {
+        e.target.value = globalThis.__JOBS_PATH__ + '/' + currentValue;
+      }
+    });
+
+    // Store last task ID for per-tab tracking
+    let lastTaskId = null;
+
+    // Run ATS analysis
+    document.getElementById('run-ats-analysis-btn').addEventListener('click', async () => {
+      const folderPath = document.getElementById('folderPath').value.trim();
+      if (!folderPath) {
+        alert('Please enter the folder path in the Folder Path field');
+        return;
+      }
+
+      const res = await fetch('/generate/runATSAnalysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      playSuccessSound();
+
+      const missing = data.missingFromResume?.slice(0, 10).join(', ') + (data.missingFromResume?.length > 10 ? '...' : '');
+      alert(`ATS Coverage: ${data.coveragePercent}%\n\nMissing keywords: ${missing || 'none'}`);
+    });
+
+    // Mark as applied
+    document.getElementById('mark-applied-btn').addEventListener('click', async () => {
+      const folderPath = document.getElementById('folderPath').value.trim();
+      console.log('Mark as Applied clicked: folderPath=', folderPath, 'lastTaskId=', lastTaskId);
+
+      const res = await fetch('/generate/markApplied', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath, taskId: lastTaskId }),
+      });
+      const data = await res.json();
+      console.log('markApplied response:', res.status, data);
+      if (!res.ok) {
+        alert(data.error || 'Error marking as applied');
+        return;
+      }
+      playSuccessSound();
+      alert(`Marked as applied: ${data.newPath}`);
+    });
+  </script>
+</body>
+</html>

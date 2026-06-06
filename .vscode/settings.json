@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "joamd",
+        "projectKey": "joamd_resume-opencode"
+    }
+}
