@@ -680,6 +680,35 @@ function applyProfileOverrides(json: any): ResumeData {
   return updated;
 }
 
+function applyCoverLetterOverrides(json: CoverLetterJSON): CoverLetterJSON {
+  const updated = { ...json };
+  updated.fullName = ENV_PROFILE.fullName;
+  updated.email = ENV_PROFILE.email;
+  updated.phone = ENV_PROFILE.phone;
+  updated.linkedinUrl = ENV_PROFILE.linkedinUrl;
+  updated.linkedinDisplay = ENV_PROFILE.linkedinDisplay;
+  
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  
+  const replacePlaceholders = (text: string): string => {
+    return text
+      .replace(/\{\{DATE\}\}/g, dateStr)
+      .replace(/\{\{FULL_NAME\}\}/g, ENV_PROFILE.fullName)
+      .replace(/\{\{EMAIL\}\}/g, ENV_PROFILE.email);
+  };
+  
+  updated.dateLine = replacePlaceholders(updated.dateLine);
+  updated.recipientLine = replacePlaceholders(updated.recipientLine);
+  updated.subjectLine = replacePlaceholders(updated.subjectLine);
+  updated.greeting = replacePlaceholders(updated.greeting);
+  updated.openingParagraph = replacePlaceholders(updated.openingParagraph);
+  updated.bodyParagraph = replacePlaceholders(updated.bodyParagraph);
+  updated.closingParagraph = replacePlaceholders(updated.closingParagraph);
+  
+  return updated;
+}
+
 export async function generateResumeJSON(
   jobDescription: string,
   extraNotes: string,
@@ -737,7 +766,7 @@ export async function generateCoverLetterJSON(
     const userContent = `COMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\nJOB DESCRIPTION:\n${sanitizedJD}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}\n\nRESUME:\n${JSON.stringify(privacySafeResume, null, 2)}`;
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt: coverPrompt, userContent, model, promptLogDir: options?.promptLogDir, jsonSchema: COVER_LETTER_JSON_SCHEMA }));
-    return result.structured;
+    return applyCoverLetterOverrides(result.structured);
   } catch (err) {
     logError('OpenCode cover letter error:', err);
     throw err;
@@ -783,10 +812,11 @@ export async function generateCombinedJSON(
     }
 
     const resume = applyProfileOverrides(result.structured.resume);
+    const coverLetter = applyCoverLetterOverrides(result.structured.coverLetter);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
       resume,
-      coverLetter: result.structured.coverLetter,
+      coverLetter,
     };
   } catch (err) {
     logError('OpenCode combined generation error:', err);
