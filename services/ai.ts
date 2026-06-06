@@ -363,26 +363,231 @@ async function waitForOutputFile(filepath: string, timeoutMs = 120000, intervalM
   return null;
 }
 
+interface PromptConfig {
+  systemPrompt: string;
+  userContent: string;
+  model: string;
+  jsonSchema?: object;
+  logDir: string;
+}
+
+interface PromptPreparationResult {
+  fullPrompt: string;
+  outputFilePath: string | null;
+  useStructuredOutput: boolean;
+}
+
+function preparePrompt(config: PromptConfig): PromptPreparationResult {
+  const { systemPrompt, userContent, model, jsonSchema } = config;
+  const logDir = config.logDir || '/tmp';
+  const modelToUse = model || OPENCODE_MODEL;
+  const useStructuredOutput = modelSupportsStructuredOutput(modelToUse);
+
+  const outputFilePath = (!useStructuredOutput && jsonSchema && logDir !== '/tmp')
+    ? path.join(logDir, `structured-output-${Date.now()}.json`)
+    : null;
+
+  const fileOutputInstruction = outputFilePath
+    ? `\n\nIMPORTANT: After generating the JSON, write it to this exact file path using bash: ${outputFilePath}\nUse this format: bash cat > ${outputFilePath} << 'JSONEOF'\n<your complete valid json here>\nJSONEOF\nWrite the file BEFORE you finish responding.`
+    : '';
+
+  const fullPrompt = `${systemPrompt}\n\n${userContent}${fileOutputInstruction}`;
+
+  return { fullPrompt, outputFilePath, useStructuredOutput };
+}
+
+function writePromptFile(promptFile: string, content: string): void {
+  fs.writeFileSync(promptFile, content, 'utf8');
+  console.log('Prompt file written:', promptFile);
+}
+
+async function createOpencodeSession(client: any, model: string): Promise<string> {
+  const session = await client.session.create({
+    body: {
+      path: { id: projectRoot },
+      config: { model }
+    }
+  });
+
+  if (session.error) {
+    throw new Error(`Session creation error: ${JSON.stringify(session.error)}`);
+  }
+
+  console.log('Session created:', JSON.stringify(session).slice(0, 500));
+  return session.data?.id || session.id;
+}
+
+function buildPromptBody(fullPrompt: string, jsonSchema?: object, useStructuredOutput?: boolean, model?: string) {
+  const promptBody: any = {
+    parts: [{ type: "text", text: fullPrompt }]
+  };
+
+  if (jsonSchema && useStructuredOutput) {
+    promptBody.format = { type: "json_schema", schema: jsonSchema };
+  }
+
+  const userModel = parseModel(model || '');
+  if (userModel.providerID && userModel.modelID) {
+    promptBody.model = { providerID: userModel.providerID, modelID: userModel.modelID };
+  } else if (MODEL_PROVIDER_ID && MODEL_ID) {
+    promptBody.model = { providerID: MODEL_PROVIDER_ID, modelID: MODEL_ID };
+  }
+
+  console.log("prompt body model details", promptBody.model);
+  return promptBody;
+}
+
+function extractJsonFromTextParts(allParts: any[]): { parsed: any; text: string } | null {
+  for (const part of allParts) {
+    if (part.type !== "text") continue;
+    const text = part.text || "";
+    if (!text.trim()) continue;
+
+    const parsed = parseJSONFromResponse(text);
+    if (parsed && Object.keys(parsed).length > 0) {
+      console.log("Successfully parsed JSON from text part");
+      return { parsed, text };
+    }
+  }
+  return null;
+}
+
+function extractJsonFromToolCalls(toolCalls: any[]): any | null {
+  for (const toolCall of toolCalls) {
+    if (toolCall.type === 'tool-call' && toolCall.name === 'bash') {
+      const args = typeof toolCall.arguments === 'string' ? JSON.parse(toolCall.arguments) : toolCall.arguments;
+      if (args.command && args.command.includes('JSONEOF')) {
+        const jsonMatch = args.command.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            console.log("Successfully extracted JSON from bash tool call");
+            return parsed;
+          } catch (e) {
+            console.error("Failed to parse JSON from tool call:", e);
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+interface ParseResultResult {
+  structured: any;
+  rawText: string;
+  usedStructuredOutput: boolean;
+}
+
+function parseStructuredResult(result: any, jsonSchema?: object): ParseResultResult | null {
+  if (jsonSchema && result.data?.info?.structured) {
+    console.log('\n========== OPENCODE DONE (structured) ==========\n');
+    return {
+      structured: result.data.info.structured,
+      rawText: '',
+      usedStructuredOutput: true
+    };
+  }
+  return null;
+}
+
+function parseTextResult(result: any, jsonSchema?: object, outputFilePath?: string | null): ParseResultResult | null {
+  const allParts = result.data?.info?.parts || result.data?.parts || [];
+
+  if (jsonSchema && result.data?.info?.error?.name === "StructuredOutputError") {
+    console.error("Failed to produce structured output:", result.data.info.error.message);
+    console.error("Attempts:", result.data.info.error.retries);
+  }
+
+  const jsonFromText = extractJsonFromTextParts(allParts);
+  if (jsonFromText) {
+    return {
+      structured: jsonFromText.parsed,
+      rawText: jsonFromText.text,
+      usedStructuredOutput: false
+    };
+  }
+
+  const info = result.data?.info;
+  if (jsonSchema && !info?.structured && info?.toolCalls) {
+    console.log("Model used tool calls instead of text output, checking tool results...");
+    const parsedFromTool = extractJsonFromToolCalls(info.toolCalls);
+    if (parsedFromTool) {
+      return {
+        structured: parsedFromTool,
+        rawText: JSON.stringify(parsedFromTool, null, 2),
+        usedStructuredOutput: false
+      };
+    }
+  }
+
+  if (outputFilePath) {
+    console.log(`Polling for output file: ${outputFilePath}`);
+    return null;
+  }
+
+  const resultText = allParts.find((p: any) => p.type === "text")?.text
+    || result.data?.content
+    || '';
+
+  console.log('\n========== OPENCODE DONE ==========\n');
+  return {
+    structured: resultText,
+    rawText: resultText,
+    usedStructuredOutput: false
+  };
+}
+
+async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult | null> {
+  const fileContent = await waitForOutputFile(outputFilePath, 120000, 2000);
+  if (fileContent) {
+    const parsed = parseJSONFromResponse(fileContent);
+    if (parsed && Object.keys(parsed).length > 0) {
+      console.log("Successfully read JSON from output file");
+      return {
+        structured: parsed,
+        rawText: fileContent,
+        usedStructuredOutput: false
+      };
+    }
+  } else {
+    console.error(`Output file not found or empty after timeout: ${outputFilePath}`);
+  }
+  return null;
+}
+
+async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any): Promise<any> {
+  const result = await client.session.prompt({
+    path: { id: sessionId },
+    body: promptBody
+  });
+
+  if (result.error) {
+    throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
+  }
+
+  console.log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000));
+  return result;
+}
+
 function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
   return new Promise(async (resolve, reject) => {
     const { systemPrompt, userContent, model, promptLogDir, jsonSchema } = opts;
     const logDir = promptLogDir || '/tmp';
+    const modelToUse = model || OPENCODE_MODEL;
+
+    const { fullPrompt, outputFilePath, useStructuredOutput } = preparePrompt({
+      systemPrompt,
+      userContent,
+      model: modelToUse,
+      jsonSchema,
+      logDir
+    });
+
     const promptFile = path.join(logDir, `opencode-prompt-${Date.now()}.txt`);
 
-    const modelToUse = model || OPENCODE_MODEL;
-    const useStructuredOutput = modelSupportsStructuredOutput(modelToUse);
-    const outputFilePath = (!useStructuredOutput && jsonSchema && logDir !== '/tmp')
-      ? path.join(logDir, `structured-output-${Date.now()}.json`)
-      : null;
-    const fileOutputInstruction = outputFilePath
-      ? `\n\nIMPORTANT: After generating the JSON, write it to this exact file path using bash: ${outputFilePath}\nUse this format: bash cat > ${outputFilePath} << 'JSONEOF'\n<your complete valid json here>\nJSONEOF\nWrite the file BEFORE you finish responding.`
-      : '';
-
-    const fullPrompt = `${systemPrompt}\n\n${userContent}${fileOutputInstruction}`;
-
     try {
-      fs.writeFileSync(promptFile, fullPrompt, 'utf8');
-      console.log('Prompt file written:', promptFile);
+      writePromptFile(promptFile, fullPrompt);
     } catch (err) {
       console.error('Failed to write prompt file:', err);
       reject(err);
@@ -398,65 +603,30 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
     try {
       const client = await getOpencodeClient();
       console.log('Creating session in:', projectRoot);
-      const session = await client.session.create({
-        body: {
-          path: {
-            id: projectRoot
-          },
-          config: {
-            model: modelToUse
-          }
-        }
-      });
 
-      if (session.error) {
-        throw new Error(`Session creation error: ${JSON.stringify(session.error)}`);
-      }
+      const sessionId = await createOpencodeSession(client, modelToUse);
+      const promptBody = buildPromptBody(fullPrompt, jsonSchema, useStructuredOutput, model);
 
-      console.log('Session created:', JSON.stringify(session).slice(0, 500));
-      const sessionId = session.data?.id || session.id;
+      const result = await executeOpencodePrompt(client, sessionId, promptBody);
 
-      const promptBody: any = {
-        parts: [{ type: "text", text: fullPrompt }]
-      };
-
-      if (jsonSchema && useStructuredOutput) {
-        promptBody.format = { type: "json_schema", schema: jsonSchema };
-      }
-
-      const userModel = parseModel(model || '');
-      if (userModel.providerID && userModel.modelID) {
-        promptBody.model = { providerID: userModel.providerID, modelID: userModel.modelID };
-      } else if (MODEL_PROVIDER_ID && MODEL_ID) {
-        promptBody.model = { providerID: MODEL_PROVIDER_ID, modelID: MODEL_ID };
-      }
-
-      console.log("prompt body model details", promptBody.model)
-
-      const result = await client.session.prompt({
-        path: { id: sessionId },
-        body: promptBody
-      });
-
-      if (result.error) {
-        throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
-      }
-
-      console.log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000))
-
-      if (jsonSchema && useStructuredOutput && result.data?.info?.structured) {
-        console.log('\n========== OPENCODE DONE (structured) ==========\n');
-        resolve({
-          structured: result.data.info.structured,
-          rawText: '',
-          usedStructuredOutput: true
-        });
+      const structuredResult = parseStructuredResult(result, jsonSchema);
+      if (structuredResult) {
+        resolve(structuredResult);
         return;
       }
 
-      if (jsonSchema && result.data?.info?.error?.name === "StructuredOutputError") {
-        console.error("Failed to produce structured output:", result.data.info.error.message);
-        console.error("Attempts:", result.data.info.error.retries);
+      const textResult = parseTextResult(result, jsonSchema, outputFilePath);
+      if (textResult) {
+        if (outputFilePath) {
+          const fileResult = await pollOutputFile(outputFilePath);
+          if (fileResult) {
+            resolve(fileResult);
+            return;
+          }
+        } else {
+          resolve(textResult);
+          return;
+        }
       }
 
       const allParts = result.data?.info?.parts || result.data?.parts || [];
@@ -464,72 +634,6 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
         || result.data?.content
         || '';
 
-      let parsed: any = null;
-      for (const part of allParts) {
-        if (part.type !== "text") continue;
-        const text = part.text || "";
-        if (!text.trim()) continue;
-
-        parsed = parseJSONFromResponse(text);
-        if (parsed && Object.keys(parsed).length > 0) {
-          console.log("Successfully parsed JSON from text part");
-          resolve({
-            structured: parsed,
-            rawText: text,
-            usedStructuredOutput: false
-          });
-          return;
-        }
-      }
-
-      const info = result.data?.info;
-      if (jsonSchema && !info?.structured && info?.toolCalls) {
-        console.log("Model used tool calls instead of text output, checking tool results...");
-        const toolCalls = info.toolCalls;
-        for (const toolCall of toolCalls) {
-          if (toolCall.type === 'tool-call' && toolCall.name === 'bash') {
-            const args = typeof toolCall.arguments === 'string' ? JSON.parse(toolCall.arguments) : toolCall.arguments;
-            if (args.command && args.command.includes('JSONEOF')) {
-              const jsonMatch = args.command.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                try {
-                  const parsed = JSON.parse(jsonMatch[0]);
-                  console.log("Successfully extracted JSON from bash tool call");
-                  resolve({
-                    structured: parsed,
-                    rawText: JSON.stringify(parsed, null, 2),
-                    usedStructuredOutput: false
-                  });
-                  return;
-                } catch (e) {
-                  console.error("Failed to parse JSON from tool call:", e);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (outputFilePath) {
-        console.log(`Polling for output file: ${outputFilePath}`);
-        const fileContent = await waitForOutputFile(outputFilePath, 120000, 2000);
-        if (fileContent) {
-          const parsed = parseJSONFromResponse(fileContent);
-          if (parsed && Object.keys(parsed).length > 0) {
-            console.log("Successfully read JSON from output file");
-            resolve({
-              structured: parsed,
-              rawText: fileContent,
-              usedStructuredOutput: false
-            });
-            return;
-          }
-        } else {
-          console.error(`Output file not found or empty after timeout: ${outputFilePath}`);
-        }
-      }
-
-      console.log('\n========== OPENCODE DONE ==========\n');
       resolve({
         structured: resultText,
         rawText: resultText,
