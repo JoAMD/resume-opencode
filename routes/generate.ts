@@ -63,6 +63,82 @@ async function compileTexFile(texPath: string): Promise<Buffer> {
   return await compilePDF(latexSource);
 }
 
+function resolveJobDir(input: string): string {
+  return path.isAbsolute(input) ? input : path.join(jobsDir, input);
+}
+
+function loadStructuredJSON(dirPath: string): any | null {
+  const structuredPath = path.join(dirPath, 'structured-output.json');
+  if (fs.existsSync(structuredPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(structuredPath, 'utf8'));
+    } catch (e) {
+      logError('Failed to parse structured-output.json:', e);
+    }
+  }
+  return null;
+}
+
+function saveJobFile(dirPath: string, filename: string, content: string | Buffer): void {
+  const filePath = path.join(dirPath, filename);
+  if (Buffer.isBuffer(content)) {
+    fs.writeFileSync(filePath, content);
+  } else {
+    fs.writeFileSync(filePath, content, 'utf8');
+  }
+}
+
+function resolveTargetDir(params: {
+  folderPath?: string;
+  taskId?: string;
+  lastTexPath?: string | null;
+}): string | null {
+  const { folderPath, taskId, lastTexPath } = params;
+
+  if (folderPath?.trim()) {
+    const resolved = resolveJobDir(folderPath);
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+      return resolved;
+    }
+    return null;
+  }
+
+  if (taskId) {
+    const task = taskMap.get(taskId);
+    if (task?.status === 'complete' && task.result?.jobDir) {
+      const targetDir = path.join(jobsDir, task.result.jobDir);
+      if (fs.existsSync(targetDir)) {
+        return targetDir;
+      }
+    }
+    return null;
+  }
+
+  if (lastTexPath) {
+    return path.dirname(lastTexPath);
+  }
+
+  return null;
+}
+
+function formatCoverLetterText(cl: CoverLetterJSON): string {
+  return [
+    cl.dateLine,
+    cl.recipientLine,
+    cl.subjectLine,
+    '',
+    cl.greeting,
+    '',
+    cl.openingParagraph,
+    '',
+    cl.bodyParagraph,
+    '',
+    cl.closingParagraph,
+    '',
+    cl.signoff,
+  ].filter(Boolean).join('\n');
+}
+
 router.get('/task/:taskId', (req, res) => {
   const { taskId } = req.params;
   const task = taskMap.get(taskId);
@@ -79,103 +155,27 @@ router.get('/task/:taskId', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { jobDescription, companyName, roleName, extraNotes, generateWithoutJD, coverOutput, lowTokenMode, useCombinedGeneration } = req.body as GenerateRequestBody;
+  const body = req.body as GenerateRequestBody;
+  const { jobDescription, companyName, roleName, extraNotes, generateWithoutJD, coverOutput, lowTokenMode, useCombinedGeneration } = body;
 
-  if (!companyName || !roleName) {
-    res.status(400).json({ error: 'companyName and roleName are required.' });
-    return;
-  }
-
-  if (!generateWithoutJD && !jobDescription?.trim()) {
-    res.status(400).json({ error: 'jobDescription is required unless generateWithoutJD is true.' });
+  const validationError = validateGenerateRequest(body);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
     return;
   }
 
   try {
-    const date = new Date().toISOString().slice(0, 10);
-    const slug = slugify(`${companyName}-${roleName}-${date}`, { lower: true, strict: true });
-    const jobDir = path.join(jobsDir, slug);
-    fs.mkdirSync(jobDir, { recursive: true });
+    const jobDir = createJobDir(companyName, roleName);
+    const options = buildGenerationOptions(body, jobDir.jobDir);
 
-    const context = { companyName, roleName, generateWithoutJD, promptLogDir: jobDir };
-    const options = { lowTokenMode: Boolean(lowTokenMode), modelSelect: req.body.modelSelect, promptLogDir: jobDir, useStarMethodForGovtRoles: Boolean(req.body.useStarMethodForGovtRoles), resumeType: req.body.resumeType as 'software' | 'qa' | undefined };
-    log(`Request: company=${companyName}, role=${roleName}, noJD=${generateWithoutJD}, lowToken=${lowTokenMode}, coverOutput=${coverOutput}, model=${req.body.modelSelect}, starMethod=${req.body.useStarMethodForGovtRoles}, resumeType=${req.body.resumeType}`);
-
-    fs.writeFileSync(path.join(jobDir, 'job-description.txt'), jobDescription ?? '', 'utf8');
-
+    saveJobFile(jobDir.jobDir, 'job-description.txt', jobDescription ?? '');
     const taskId = createTaskId();
     taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
-
-    res.json({ taskId, jobDir: slug });
+    res.json({ taskId, jobDir: jobDir.slug });
 
     (async () => {
       try {
-        let resumeJSON: ResumeData;
-        let coverLetterJSON: CoverLetterJSON | undefined;
-        let atsKeywords: string[] = [];
-
-        if (useCombinedGeneration !== false && coverOutput && coverOutput !== 'none') {
-          const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', companyName, roleName, generateWithoutJD, options);
-          resumeJSON = combined.resume;
-          coverLetterJSON = combined.coverLetter;
-          atsKeywords = combined.atsKeywords ?? [];
-        } else {
-          resumeJSON = await generateResumeJSON(jobDescription ?? '', extraNotes ?? '', context, options);
-        }
-
-        lastGeneratedResumeJSON = resumeJSON;
-        log('Resume JSON received');
-
-        const latexSource = buildLatex(resumeJSON, req.body.resumeType);
-        const pdfBuffer = await compilePDF(latexSource);
-
-        fs.writeFileSync(path.join(jobDir, 'resume.tex'), latexSource, 'utf8');
-        fs.writeFileSync(path.join(jobDir, 'resume.pdf'), pdfBuffer);
-        const texPath = path.join(jobDir, 'resume.tex');
-        lastGeneratedTexPath = texPath;
-
-        fs.writeFileSync(path.join(jobDir, 'structured-output.json'), JSON.stringify(resumeJSON, null, 2), 'utf8');
-
-        let coverPdfUrl: string | undefined;
-        let coverTxtUrl: string | undefined;
-
-        if (coverLetterJSON) {
-          lastGeneratedCoverLetterJSON = coverLetterJSON;
-          fs.writeFileSync(path.join(jobDir, 'cover-letter.json'), JSON.stringify(coverLetterJSON, null, 2), 'utf8');
-
-          const coverLatex = buildCoverLetterLatex(coverLetterJSON);
-          fs.writeFileSync(path.join(jobDir, 'cover-letter.tex'), coverLatex, 'utf8');
-
-          if (coverOutput === 'txt') {
-            const txtContent = formatCoverLetterText(coverLetterJSON);
-            const txtPath = path.join(jobDir, 'cover-letter.txt');
-            fs.writeFileSync(txtPath, txtContent, 'utf8');
-            coverTxtUrl = `/jobs/${slug}/cover-letter.txt`;
-          } else if (coverOutput === 'pdf') {
-            const coverPdfBuffer = await compilePDF(coverLatex);
-            fs.writeFileSync(path.join(jobDir, 'cover-letter.pdf'), coverPdfBuffer);
-            coverPdfUrl = `/jobs/${slug}/cover-letter.pdf`;
-          }
-        }
-
-        let atsResult = null;
-        let atsCoverage: number | undefined;
-        if (atsKeywords.length > 0) {
-          atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON);
-          atsCoverage = atsResult.coveragePercent;
-          fs.writeFileSync(path.join(jobDir, 'ats-analysis.json'), JSON.stringify(atsResult, null, 2), 'utf8');
-          log(`ATS analysis: ${atsCoverage}% coverage, ${atsKeywords.length} keywords`);
-        }
-
-        const result = {
-          pdfUrl: `/jobs/${slug}/resume.pdf`,
-          jobDir: slug,
-          ...(coverPdfUrl && { coverPdfUrl }),
-          ...(coverTxtUrl && { coverTxtUrl }),
-          ...(atsCoverage !== undefined && { atsCoverage }),
-          ...(atsKeywords.length > 0 && { atsKeywords }),
-        };
-
+        const result = await executeGeneration(jobDir, options, { jobDescription, extraNotes, coverOutput, useCombinedGeneration });
         taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now() });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
@@ -200,19 +200,9 @@ router.post('/coverLetter', async (req, res) => {
   let resumeJSON = lastGeneratedResumeJSON;
 
   if (!resumeJSON && folderPath?.trim()) {
-    let resolvedPath = folderPath;
-    if (!path.isAbsolute(folderPath)) {
-      resolvedPath = path.join(jobsDir, folderPath);
-    }
-    const structuredPath = path.join(resolvedPath, 'structured-output.json');
-    if (fs.existsSync(structuredPath)) {
-      try {
-        resumeJSON = JSON.parse(fs.readFileSync(structuredPath, 'utf8'));
-        log('Loaded resume JSON from folder:', structuredPath);
-      } catch (e) {
-        logError('Failed to parse structured-output.json:', e);
-      }
-    }
+    const resolved = resolveJobDir(folderPath);
+    resumeJSON = loadStructuredJSON(resolved);
+    if (resumeJSON) log('Loaded resume JSON from folder:', resolved);
   }
 
   if (!resumeJSON) {
@@ -231,30 +221,19 @@ router.post('/coverLetter', async (req, res) => {
     );
     lastGeneratedCoverLetterJSON = coverLetterJSON;
 
-    let jobDir = jobsDir;
-    if (lastGeneratedTexPath) {
-      jobDir = path.dirname(lastGeneratedTexPath);
-    } else {
-      const date = new Date().toISOString().slice(0, 10);
-      const slug = slugify(`cover-letter-${companyName}-${roleName}-${date}`, { lower: true, strict: true });
-      jobDir = path.join(jobsDir, slug);
-      fs.mkdirSync(jobDir, { recursive: true });
-    }
-
-    fs.writeFileSync(path.join(jobDir, 'cover-letter.json'), JSON.stringify(coverLetterJSON, null, 2), 'utf8');
+    const jobDir = resolveCoverLetterJobDir(companyName, roleName);
+    saveJobFile(jobDir, 'cover-letter.json', JSON.stringify(coverLetterJSON, null, 2));
 
     const latexSource = buildCoverLetterLatex(coverLetterJSON);
-    fs.writeFileSync(path.join(jobDir, 'cover-letter.tex'), latexSource, 'utf8');
+    saveJobFile(jobDir, 'cover-letter.tex', latexSource);
 
     if (coverOutput === 'txt') {
       const txtContent = formatCoverLetterText(coverLetterJSON);
-      const txtPath = path.join(jobDir, 'cover-letter.txt');
-      fs.writeFileSync(txtPath, txtContent, 'utf8');
+      saveJobFile(jobDir, 'cover-letter.txt', txtContent);
       res.json({ txtUrl: `/jobs/${path.basename(jobDir)}/cover-letter.txt` });
     } else {
       const pdfBuffer = await compilePDF(latexSource);
-      const pdfPath = path.join(jobDir, 'cover-letter.pdf');
-      fs.writeFileSync(pdfPath, pdfBuffer);
+      saveJobFile(jobDir, 'cover-letter.pdf', pdfBuffer);
       res.json({ pdfUrl: `/jobs/${path.basename(jobDir)}/cover-letter.pdf` });
     }
   } catch (err: unknown) {
@@ -290,35 +269,22 @@ router.post('/compileLastTex', async (req, res) => {
 router.post('/compileFolderTex', async (req, res) => {
   try {
     const { folderPath } = req.body as { folderPath?: string };
-    let targetDir = jobsDir;
-    if (folderPath && fs.existsSync(folderPath)) {
-      if (fs.statSync(folderPath).isDirectory()) {
-        targetDir = folderPath;
-      } else if (folderPath.toLowerCase().endsWith('.tex') && fs.existsSync(folderPath)) {
-        const pdfBuffer = await compileTexFile(folderPath);
-        const pdfPath = folderPath.replace(/\.tex$/i, '.pdf');
-        fs.writeFileSync(pdfPath, pdfBuffer);
-        res.json({ count: 1 });
-        return;
-      }
+    const targetDir = resolveCompileTargetDir(folderPath);
+
+    if (targetDir === 'single-file') {
+      const pdfBuffer = await compileTexFile(folderPath!);
+      const pdfPath = folderPath!.replace(/\.tex$/i, '.pdf');
+      fs.writeFileSync(pdfPath, pdfBuffer);
+      res.json({ count: 1 });
+      return;
     }
-    if (!fs.existsSync(targetDir)) {
+
+    if (!targetDir) {
       res.status(400).json({ error: 'Directory does not exist.' });
       return;
     }
-    let count = 0;
-    const texFiles = fs.readdirSync(targetDir).filter(f => f.toLowerCase().endsWith('.tex'));
-    for (const texFile of texFiles) {
-      const texPath = path.join(targetDir, texFile);
-      try {
-        const pdfBuffer = await compileTexFile(texPath);
-        const pdfPath = texPath.replace(/\.tex$/i, '.pdf');
-        fs.writeFileSync(pdfPath, pdfBuffer);
-        count++;
-      } catch (e) {
-        logError(`Failed to compile ${texPath}:`, e);
-      }
-    }
+
+    const count = compileAllTexInDir(targetDir);
     res.json({ count });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -330,86 +296,19 @@ router.post('/compileFolderTex', async (req, res) => {
 router.post('/latexFromStructured', async (req, res) => {
   try {
     const { structuredJSON, structuredPath } = req.body as { structuredJSON?: any; structuredPath?: string };
-    let targetJSON = structuredJSON;
-    let isCoverLetter = false;
+    const parseResult = parseStructuredInput(structuredJSON, structuredPath);
 
-    if (structuredPath && fs.existsSync(structuredPath)) {
-      const stat = fs.statSync(structuredPath);
-      let jsonPath = structuredPath;
-
-      if (stat.isDirectory()) {
-        const resumeCandidate = path.join(structuredPath, 'structured-output.json');
-        const coverLetterCandidate = path.join(structuredPath, 'cover-letter-structured-output.json');
-
-        if (fs.existsSync(resumeCandidate)) {
-          jsonPath = resumeCandidate;
-          isCoverLetter = false;
-        } else if (fs.existsSync(coverLetterCandidate)) {
-          jsonPath = coverLetterCandidate;
-          isCoverLetter = true;
-        } else {
-          res.status(400).json({ error: 'No structured-output.json or cover-letter-structured-output.json found in the directory.' });
-          return;
-        }
-      } else if (structuredPath.toLowerCase().includes('cover-letter')) {
-        isCoverLetter = true;
-      }
-
-      const raw = fs.readFileSync(jsonPath, 'utf8');
-      targetJSON = JSON.parse(raw);
-    }
-
-    if (!targetJSON) {
-      res.status(400).json({ error: 'structuredJSON is required (or provide a valid structuredPath).' });
+    if (!parseResult.success) {
+      res.status(400).json({ error: parseResult.error });
       return;
     }
 
-    const sourceDir = structuredPath && fs.existsSync(structuredPath) && fs.statSync(structuredPath).isDirectory() 
-      ? structuredPath 
-      : (structuredPath ? path.dirname(structuredPath) : null);
+    const targetJSON = parseResult.json!;
+    const isCoverLetter = parseResult.isCoverLetter;
+    const sourceDir = parseResult.sourceDir;
 
-    const latexSource = isCoverLetter ? buildCoverLetterLatex(targetJSON) : buildLatex(targetJSON);
-    const date = new Date().toISOString().slice(0, 10);
-    const tmpDir = path.join(jobsDir, `structured-${date}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
-    const texFilename = isCoverLetter ? 'cover-letter.tex' : 'resume.tex';
-    const texPath = path.join(tmpDir, texFilename);
-    fs.writeFileSync(texPath, latexSource, 'utf8');
-    const pdfBuffer = await compilePDF(latexSource);
-    const pdfFilename = isCoverLetter ? 'cover-letter.pdf' : 'resume.pdf';
-    const pdfPath = path.join(tmpDir, pdfFilename);
-    fs.writeFileSync(pdfPath, pdfBuffer);
-
-    const response: { texUrl: string; pdfUrl: string; txtUrl?: string } = { texUrl: `/jobs/${path.basename(tmpDir)}/${texFilename}`, pdfUrl: `/jobs/${path.basename(tmpDir)}/${pdfFilename}` };
-
-    if (isCoverLetter) {
-      const txtContent = [
-        targetJSON.dateLine,
-        targetJSON.recipientLine,
-        targetJSON.subjectLine,
-        '',
-        targetJSON.greeting,
-        '',
-        targetJSON.openingParagraph,
-        '',
-        targetJSON.bodyParagraph,
-        '',
-        targetJSON.closingParagraph,
-        '',
-        targetJSON.signoff,
-        targetJSON.fullName,
-      ].filter(Boolean).join('\n');
-      const txtPath = path.join(tmpDir, 'cover-letter.txt');
-      fs.writeFileSync(txtPath, txtContent, 'utf8');
-      response.txtUrl = `/jobs/${path.basename(tmpDir)}/cover-letter.txt`;
-
-      if (sourceDir && fs.existsSync(sourceDir)) {
-        const sourceTxtPath = path.join(sourceDir, 'cover-letter.txt');
-        fs.writeFileSync(sourceTxtPath, txtContent, 'utf8');
-      }
-    }
-
-    res.json(response);
+    const result = buildLatexFromStructured(targetJSON, isCoverLetter, sourceDir);
+    res.json(result);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Latex from structured error:', err);
@@ -422,44 +321,12 @@ router.post('/markApplied', async (req, res) => {
     const { folderPath, taskId } = req.body as { folderPath?: string; taskId?: string };
     log(`markApplied called: folderPath="${folderPath}", taskId="${taskId}"`);
 
-    let targetDir = jobsDir;
+    const targetDir = resolveTargetDir({ folderPath, taskId, lastTexPath: lastGeneratedTexPath });
 
-    if (folderPath?.trim()) {
-      log(`Using folderPath: ${folderPath}`);
-      let resolvedPath = folderPath;
-      if (!path.isAbsolute(folderPath)) {
-        resolvedPath = path.join(jobsDir, folderPath);
-      }
-      log(`Resolved path: ${resolvedPath}, exists: ${fs.existsSync(resolvedPath)}`);
-      if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
-        targetDir = resolvedPath;
-      } else {
-        res.status(400).json({ error: 'Invalid folder path' });
-        return;
-      }
-    } else if (taskId) {
-      log(`Using taskId: ${taskId}`);
-      const task = taskMap.get(taskId);
-      log(`Task found: ${!!task}, status: ${task?.status}, jobDir: ${task?.result?.jobDir}`);
-      if (!task || task.status !== 'complete' || !task.result?.jobDir) {
-        res.status(400).json({ error: 'Invalid or incomplete taskId' });
-        return;
-      }
-      targetDir = path.join(jobsDir, task.result.jobDir);
-      log(`Target dir from task: ${targetDir}, exists: ${fs.existsSync(targetDir)}`);
-      if (!fs.existsSync(targetDir)) {
-        res.status(400).json({ error: 'Task folder no longer exists' });
-        return;
-      }
-    } else if (lastGeneratedTexPath) {
-      log(`Using lastGeneratedTexPath: ${lastGeneratedTexPath}`);
-      targetDir = path.dirname(lastGeneratedTexPath);
-    } else {
+    if (!targetDir) {
       res.status(400).json({ error: 'No folder path provided and no recently generated resume found' });
       return;
     }
-
-    log(`Final targetDir: ${targetDir}`);
 
     const folderName = path.basename(targetDir);
     if (folderName.startsWith('(applied) ')) {
@@ -467,13 +334,13 @@ router.post('/markApplied', async (req, res) => {
       return;
     }
 
-    const parentDir = path.dirname(targetDir);
-    const newFolderName = `(applied) ${folderName}`;
-    const newDir = path.join(parentDir, newFolderName);
+    const newDir = renameJobDir(targetDir, '(applied) ');
+    if (!newDir) {
+      res.status(500).json({ error: 'Failed to rename directory' });
+      return;
+    }
 
-    fs.renameSync(targetDir, newDir);
-    log(`Marked folder as applied: ${folderName} -> ${newFolderName}`);
-
+    log(`Marked folder as applied: ${folderName} -> ${path.basename(newDir)}`);
     res.json({ success: true, oldPath: targetDir, newPath: newDir });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -484,7 +351,6 @@ router.post('/markApplied', async (req, res) => {
 
 router.post('/runATSAnalysis', async (req, res) => {
   try {
-    log('runATSAnalysis called');
     const { jobDescription, resumeJSON, atsKeywordsFromAI, folderPath } = req.body as {
       jobDescription?: string;
       resumeJSON?: ResumeData;
@@ -492,84 +358,20 @@ router.post('/runATSAnalysis', async (req, res) => {
       folderPath?: string;
     };
 
-    log('folderPath:', folderPath);
+    const result = await executeATSAnalysis({
+      folderPath,
+      resumeJSON,
+      jobDescription,
+      atsKeywordsFromAI,
+      lastGeneratedResumeJSON,
+    });
 
-    let targetResume: ResumeData | undefined;
-    let targetJobDescription = jobDescription;
-    let extractedAtsKeywords: string[] | undefined;
-
-    if (folderPath?.trim()) {
-      let resolvedPath = folderPath;
-      if (!path.isAbsolute(folderPath)) {
-        resolvedPath = path.join(jobsDir, folderPath);
-      }
-      log('Resolved path:', resolvedPath);
-
-      const resumePath = path.join(resolvedPath, 'structured-output.json');
-      log('Resume path exists:', fs.existsSync(resumePath));
-      if (fs.existsSync(resumePath)) {
-        const resumeData = fs.readFileSync(resumePath, 'utf8');
-        targetResume = JSON.parse(resumeData);
-        extractedAtsKeywords = targetResume.atsKeywords;
-      }
-
-      const atsPath = path.join(resolvedPath, 'ats-analysis.json');
-      if (fs.existsSync(atsPath)) {
-        const atsData = JSON.parse(fs.readFileSync(atsPath, 'utf8'));
-        if (!extractedAtsKeywords?.length && atsData.extractedFromJD?.length) {
-          extractedAtsKeywords = atsData.extractedFromJD;
-        }
-      }
-
-      const jdPath = path.join(resolvedPath, 'job-description.txt');
-      if (fs.existsSync(jdPath)) {
-        targetJobDescription = fs.readFileSync(jdPath, 'utf8');
-      }
-    } else {
-      targetResume = resumeJSON ?? lastGeneratedResumeJSON;
-    }
-
-    log('targetResume found:', !!targetResume);
-
-    if (!targetResume) {
-      res.status(400).json({ error: 'No resume JSON available. Provide folderPath with structured-output.json, or resumeJSON, or generate a resume first.' });
+    if (result.error) {
+      res.status(400).json({ error: result.error });
       return;
     }
 
-    let atsKeywords: string[] = [];
-
-    if (atsKeywordsFromAI && atsKeywordsFromAI.length > 0) {
-      atsKeywords = atsKeywordsFromAI;
-      log('Using provided atsKeywords:', atsKeywords.length);
-    } else if (extractedAtsKeywords?.length) {
-      atsKeywords = extractedAtsKeywords;
-      log('Using extracted atsKeywords from saved files:', atsKeywords.length);
-    } else if (targetJobDescription?.trim()) {
-      log('Extracting atsKeywords from JD via AI');
-      atsKeywords = await extractATSKeywordsFromJDViaAI(targetJobDescription);
-    } else {
-      res.status(400).json({ error: 'No job description available. Provide atsKeywordsFromAI or ensure job-description.txt exists in folderPath.' });
-      return;
-    }
-
-    if (!atsKeywords.length) {
-      res.json({ coveragePercent: 0, extractedFromJD: [], includedInResume: [], missingFromResume: [] });
-      return;
-    }
-
-    const atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, targetResume);
-    log('ATS result:', atsResult.coveragePercent);
-
-    if (folderPath?.trim()) {
-      let resolvedPath = folderPath;
-      if (!path.isAbsolute(folderPath)) {
-        resolvedPath = path.join(jobsDir, folderPath);
-      }
-      fs.writeFileSync(path.join(resolvedPath, 'ats-analysis.json'), JSON.stringify(atsResult, null, 2), 'utf8');
-      log('Saved updated ats-analysis.json');
-    }
-
-    res.json(atsResult);
+    res.json(result.analysis);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('ATS analysis error:', err);
@@ -577,22 +379,351 @@ router.post('/runATSAnalysis', async (req, res) => {
   }
 });
 
-function formatCoverLetterText(cl: CoverLetterJSON): string {
-  return [
-    cl.dateLine,
-    cl.recipientLine,
-    cl.subjectLine,
-    '',
-    cl.greeting,
-    '',
-    cl.openingParagraph,
-    '',
-    cl.bodyParagraph,
-    '',
-    cl.closingParagraph,
-    '',
-    cl.signoff,
-  ].filter(Boolean).join('\n');
+function validateGenerateRequest(body: GenerateRequestBody): string | null {
+  const { companyName, roleName, jobDescription, generateWithoutJD } = body;
+  if (!companyName || !roleName) {
+    return 'companyName and roleName are required.';
+  }
+  if (!generateWithoutJD && !jobDescription?.trim()) {
+    return 'jobDescription is required unless generateWithoutJD is true.';
+  }
+  return null;
+}
+
+function createJobDir(companyName: string, roleName: string): { jobDir: string; slug: string } {
+  const date = new Date().toISOString().slice(0, 10);
+  const slug = slugify(`${companyName}-${roleName}-${date}`, { lower: true, strict: true });
+  const jobDir = path.join(jobsDir, slug);
+  fs.mkdirSync(jobDir, { recursive: true });
+  return { jobDir, slug };
+}
+
+function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
+  return {
+    lowTokenMode: Boolean(body.lowTokenMode),
+    modelSelect: body.modelSelect,
+    promptLogDir: jobDirPath,
+    useStarMethodForGovtRoles: Boolean(body.useStarMethodForGovtRoles),
+    resumeType: body.resumeType as 'software' | 'qa' | undefined,
+  };
+}
+
+async function executeGeneration(
+  jobDir: { jobDir: string; slug: string },
+  options: ReturnType<typeof buildGenerationOptions>,
+  input: { jobDescription?: string; extraNotes?: string; coverOutput?: string; useCombinedGeneration?: boolean }
+): Promise<Record<string, unknown>> {
+  const { jobDescription, extraNotes, coverOutput, useCombinedGeneration } = input;
+
+  let resumeJSON: ResumeData;
+  let coverLetterJSON: CoverLetterJSON | undefined;
+  let atsKeywords: string[] = [];
+
+  const context = { companyName: '', roleName: '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
+
+  if (useCombinedGeneration !== false && coverOutput && coverOutput !== 'none') {
+    const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', '', '', false, options);
+    resumeJSON = combined.resume;
+    coverLetterJSON = combined.coverLetter;
+    atsKeywords = combined.atsKeywords ?? [];
+  } else {
+    resumeJSON = await generateResumeJSON(jobDescription ?? '', extraNotes ?? '', context, options);
+  }
+
+  lastGeneratedResumeJSON = resumeJSON;
+  log('Resume JSON received');
+
+  const latexSource = buildLatex(resumeJSON, options.resumeType);
+  const pdfBuffer = await compilePDF(latexSource);
+
+  saveJobFile(jobDir.jobDir, 'resume.tex', latexSource);
+  saveJobFile(jobDir.jobDir, 'resume.pdf', pdfBuffer);
+  lastGeneratedTexPath = path.join(jobDir.jobDir, 'resume.tex');
+
+  saveJobFile(jobDir.jobDir, 'structured-output.json', JSON.stringify(resumeJSON, null, 2));
+
+  const result: Record<string, unknown> = {
+    pdfUrl: `/jobs/${jobDir.slug}/resume.pdf`,
+    jobDir: jobDir.slug,
+  };
+
+  if (coverLetterJSON) {
+    lastGeneratedCoverLetterJSON = coverLetterJSON;
+    saveJobFile(jobDir.jobDir, 'cover-letter.json', JSON.stringify(coverLetterJSON, null, 2));
+
+    const coverLatex = buildCoverLetterLatex(coverLetterJSON);
+    saveJobFile(jobDir.jobDir, 'cover-letter.tex', coverLatex);
+
+    if (coverOutput === 'txt') {
+      const txtContent = formatCoverLetterText(coverLetterJSON);
+      saveJobFile(jobDir.jobDir, 'cover-letter.txt', txtContent);
+      result.coverTxtUrl = `/jobs/${jobDir.slug}/cover-letter.txt`;
+    } else if (coverOutput === 'pdf') {
+      const coverPdfBuffer = await compilePDF(coverLatex);
+      saveJobFile(jobDir.jobDir, 'cover-letter.pdf', coverPdfBuffer);
+      result.coverPdfUrl = `/jobs/${jobDir.slug}/cover-letter.pdf`;
+    }
+  }
+
+  if (atsKeywords.length > 0) {
+    const atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON);
+    result.atsCoverage = atsResult.coveragePercent;
+    result.atsKeywords = atsKeywords;
+    saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(atsResult, null, 2));
+    log(`ATS analysis: ${atsResult.coveragePercent}% coverage, ${atsKeywords.length} keywords`);
+  }
+
+  return result;
+}
+
+function resolveCoverLetterJobDir(companyName: string, roleName: string): string {
+  if (lastGeneratedTexPath) {
+    return path.dirname(lastGeneratedTexPath);
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  const slug = slugify(`cover-letter-${companyName}-${roleName}-${date}`, { lower: true, strict: true });
+  const jobDir = path.join(jobsDir, slug);
+  fs.mkdirSync(jobDir, { recursive: true });
+  return jobDir;
+}
+
+function resolveCompileTargetDir(folderPath?: string): string | null | 'single-file' {
+  if (folderPath && fs.existsSync(folderPath)) {
+    if (fs.statSync(folderPath).isDirectory()) {
+      return folderPath;
+    }
+    if (folderPath.toLowerCase().endsWith('.tex')) {
+      return 'single-file';
+    }
+  }
+  if (fs.existsSync(jobsDir)) {
+    return jobsDir;
+  }
+  return null;
+}
+
+function compileAllTexInDir(targetDir: string): number {
+  let count = 0;
+  const texFiles = fs.readdirSync(targetDir).filter(f => f.toLowerCase().endsWith('.tex'));
+  for (const texFile of texFiles) {
+    const texPath = path.join(targetDir, texFile);
+    try {
+      const pdfBuffer = compileTexFileSync(texPath);
+      const pdfPath = texPath.replace(/\.tex$/i, '.pdf');
+      fs.writeFileSync(pdfPath, pdfBuffer);
+      count++;
+    } catch (e) {
+      logError(`Failed to compile ${texPath}:`, e);
+    }
+  }
+  return count;
+}
+
+function compileTexFileSync(texPath: string): Buffer {
+  const latexSource = fs.readFileSync(texPath, 'utf8');
+  return require('child_process').execSync(
+    `cd "${path.dirname(texPath)}" && pdflatex -interaction=nonstopmode "${texPath}"`,
+    { maxBuffer: 50 * 1024 * 1024 }
+  );
+}
+
+interface ParseStructuredInputResult {
+  success: boolean;
+  json?: any;
+  isCoverLetter?: boolean;
+  sourceDir?: string | null;
+  error?: string;
+}
+
+function parseStructuredInput(structuredJSON?: any, structuredPath?: string): ParseStructuredInputResult {
+  let targetJSON = structuredJSON;
+  let isCoverLetter = false;
+
+  if (structuredPath && fs.existsSync(structuredPath)) {
+    const stat = fs.statSync(structuredPath);
+    let jsonPath = structuredPath;
+
+    if (stat.isDirectory()) {
+      const resumeCandidate = path.join(structuredPath, 'structured-output.json');
+      const coverLetterCandidate = path.join(structuredPath, 'cover-letter-structured-output.json');
+
+      if (fs.existsSync(resumeCandidate)) {
+        jsonPath = resumeCandidate;
+      } else if (fs.existsSync(coverLetterCandidate)) {
+        jsonPath = coverLetterCandidate;
+        isCoverLetter = true;
+      } else {
+        return { success: false, error: 'No structured-output.json or cover-letter-structured-output.json found in the directory.' };
+      }
+    } else if (structuredPath.toLowerCase().includes('cover-letter')) {
+      isCoverLetter = true;
+    }
+
+    const raw = fs.readFileSync(jsonPath, 'utf8');
+    targetJSON = JSON.parse(raw);
+  }
+
+  if (!targetJSON) {
+    return { success: false, error: 'structuredJSON is required (or provide a valid structuredPath).' };
+  }
+
+  const sourceDir = structuredPath && fs.existsSync(structuredPath) && fs.statSync(structuredPath).isDirectory()
+    ? structuredPath
+    : (structuredPath ? path.dirname(structuredPath) : null);
+
+  return { success: true, json: targetJSON, isCoverLetter, sourceDir };
+}
+
+function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourceDir: string | null | undefined): { texUrl: string; pdfUrl: string; txtUrl?: string } {
+  const latexSource = isCoverLetter ? buildCoverLetterLatex(targetJSON) : buildLatex(targetJSON);
+  const date = new Date().toISOString().slice(0, 10);
+  const tmpDir = path.join(jobsDir, `structured-${date}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const texFilename = isCoverLetter ? 'cover-letter.tex' : 'resume.tex';
+  const pdfFilename = isCoverLetter ? 'cover-letter.pdf' : 'resume.pdf';
+
+  saveJobFile(tmpDir, texFilename, latexSource);
+  const pdfBuffer = compilePDFSync(latexSource);
+  saveJobFile(tmpDir, pdfFilename, pdfBuffer);
+
+  const response: { texUrl: string; pdfUrl: string; txtUrl?: string } = {
+    texUrl: `/jobs/${path.basename(tmpDir)}/${texFilename}`,
+    pdfUrl: `/jobs/${path.basename(tmpDir)}/${pdfFilename}`,
+  };
+
+  if (isCoverLetter) {
+    const txtContent = [
+      targetJSON.dateLine,
+      targetJSON.recipientLine,
+      targetJSON.subjectLine,
+      '',
+      targetJSON.greeting,
+      '',
+      targetJSON.openingParagraph,
+      '',
+      targetJSON.bodyParagraph,
+      '',
+      targetJSON.closingParagraph,
+      '',
+      targetJSON.signoff,
+      targetJSON.fullName,
+    ].filter(Boolean).join('\n');
+    saveJobFile(tmpDir, 'cover-letter.txt', txtContent);
+    response.txtUrl = `/jobs/${path.basename(tmpDir)}/cover-letter.txt`;
+
+    if (sourceDir && fs.existsSync(sourceDir)) {
+      saveJobFile(sourceDir, 'cover-letter.txt', txtContent);
+    }
+  }
+
+  return response;
+}
+
+function compilePDFSync(latexSource: string): Buffer {
+  const tmpDir = path.join(jobsDir, 'tmp-compile');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpTex = path.join(tmpDir, 'tmp.tex');
+  fs.writeFileSync(tmpTex, latexSource, 'utf8');
+  return compilePDFSyncFile(tmpTex);
+}
+
+function compilePDFSyncFile(texPath: string): Buffer {
+  try {
+    const result = require('child_process').execSync(
+      `cd "${path.dirname(texPath)}" && pdflatex -interaction=nonstopmode "${texPath}" > /dev/null 2>&1 && echo "success"`,
+      { timeout: 60000 }
+    );
+    const pdfPath = texPath.replace(/\.tex$/i, '.pdf');
+    return fs.readFileSync(pdfPath);
+  } catch {
+    return Buffer.from('');
+  }
+}
+
+function renameJobDir(targetDir: string, prefix: string): string | null {
+  if (!fs.existsSync(targetDir)) return null;
+  const folderName = path.basename(targetDir);
+  const parentDir = path.dirname(targetDir);
+  const newDir = path.join(parentDir, `${prefix}${folderName}`);
+  fs.renameSync(targetDir, newDir);
+  return newDir;
+}
+
+interface ATSAnalysisResult {
+  coveragePercent: number;
+  extractedFromJD: string[];
+  includedInResume: string[];
+  missingFromResume: string[];
+}
+
+interface ExecuteATSAnalysisInput {
+  folderPath?: string;
+  resumeJSON?: ResumeData;
+  jobDescription?: string;
+  atsKeywordsFromAI?: string[];
+  lastGeneratedResumeJSON: ResumeData | null;
+}
+
+async function executeATSAnalysis(input: ExecuteATSAnalysisInput): Promise<{ analysis: ATSAnalysisResult | null; error?: string }> {
+  let targetResume: ResumeData | undefined;
+  let targetJobDescription = input.jobDescription;
+  let extractedAtsKeywords: string[] | undefined;
+
+  if (input.folderPath?.trim()) {
+    const resolved = resolveJobDir(input.folderPath);
+
+    const resumePath = path.join(resolved, 'structured-output.json');
+    if (fs.existsSync(resumePath)) {
+      const resumeData = fs.readFileSync(resumePath, 'utf8');
+      targetResume = JSON.parse(resumeData);
+      extractedAtsKeywords = (targetResume as any).atsKeywords;
+    }
+
+    const atsPath = path.join(resolved, 'ats-analysis.json');
+    if (fs.existsSync(atsPath)) {
+      const atsData = JSON.parse(fs.readFileSync(atsPath, 'utf8'));
+      if (!extractedAtsKeywords?.length && atsData.extractedFromJD?.length) {
+        extractedAtsKeywords = atsData.extractedFromJD;
+      }
+    }
+
+    const jdPath = path.join(resolved, 'job-description.txt');
+    if (fs.existsSync(jdPath)) {
+      targetJobDescription = fs.readFileSync(jdPath, 'utf8');
+    }
+  } else {
+    targetResume = input.resumeJSON ?? input.lastGeneratedResumeJSON;
+  }
+
+  if (!targetResume) {
+    return { analysis: null, error: 'No resume JSON available. Provide folderPath with structured-output.json, or resumeJSON, or generate a resume first.' };
+  }
+
+  let atsKeywords: string[] = [];
+
+  if (input.atsKeywordsFromAI && input.atsKeywordsFromAI.length > 0) {
+    atsKeywords = input.atsKeywordsFromAI;
+  } else if (extractedAtsKeywords?.length) {
+    atsKeywords = extractedAtsKeywords;
+  } else if (targetJobDescription?.trim()) {
+    atsKeywords = await extractATSKeywordsFromJDViaAI(targetJobDescription);
+  } else {
+    return { analysis: null, error: 'No job description available. Provide atsKeywordsFromAI or ensure job-description.txt exists in folderPath.' };
+  }
+
+  if (!atsKeywords.length) {
+    return { analysis: { coveragePercent: 0, extractedFromJD: [], includedInResume: [], missingFromResume: [] } };
+  }
+
+  const atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, targetResume);
+
+  if (input.folderPath?.trim()) {
+    const resolved = resolveJobDir(input.folderPath);
+    saveJobFile(resolved, 'ats-analysis.json', JSON.stringify(atsResult, null, 2));
+  }
+
+  return { analysis: atsResult };
 }
 
 export default router;
