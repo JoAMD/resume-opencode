@@ -7,5 +7,15 @@
     }
   },
   "permission": {
+  },
+  "mcp": {
+    "codescene": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "@codescene/codehealth-mcp"],
+      "environment": {
+        "CS_ACCESS_TOKEN": "{env:CS_ACCESS_TOKEN}"
+      }
+    }
   }
 }
