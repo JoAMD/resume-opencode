@@ -175,7 +175,7 @@ router.post('/', async (req, res) => {
 
     (async () => {
       try {
-        const result = await executeGeneration(jobDir, options, { jobDescription, extraNotes, coverOutput, useCombinedGeneration });
+        const result = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
         taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now() });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
@@ -411,18 +411,18 @@ function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
 async function executeGeneration(
   jobDir: { jobDir: string; slug: string },
   options: ReturnType<typeof buildGenerationOptions>,
-  input: { jobDescription?: string; extraNotes?: string; coverOutput?: string; useCombinedGeneration?: boolean }
+  input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string; coverOutput?: string; useCombinedGeneration?: boolean }
 ): Promise<Record<string, unknown>> {
-  const { jobDescription, extraNotes, coverOutput, useCombinedGeneration } = input;
+  const { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration } = input;
 
   let resumeJSON: ResumeData;
   let coverLetterJSON: CoverLetterJSON | undefined;
   let atsKeywords: string[] = [];
 
-  const context = { companyName: '', roleName: '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
+  const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
 
   if (useCombinedGeneration !== false && coverOutput && coverOutput !== 'none') {
-    const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', '', '', false, options);
+    const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', companyName ?? '', roleName ?? '', false, options);
     resumeJSON = combined.resume;
     coverLetterJSON = combined.coverLetter;
     atsKeywords = combined.atsKeywords ?? [];
