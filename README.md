@@ -50,6 +50,10 @@ Models that don't support structured output write JSON to a file; server polls f
 2. After resume generation, `analyzeATSKeywordsAgainstResume()` runs regex matching
 3. Reports coverage %, included keywords, and missing keywords
 
+### Per-model AI concurrency
+
+`enqueueAIRequest` in `services/ai.ts` runs all AI calls for the same model through a slot pool. By default the cap is `1` (strictly serial per model), preserving the original behavior. Set `OPENCODE_AI_CONCURRENCY=2` (or `3`) to allow that many calls per model to run in parallel; excess calls queue and wait. Raising it speeds up batch generation but can trigger upstream provider rate limits.
+
 ### Security
 
 - Input sanitization on job descriptions (Unicode, special chars)

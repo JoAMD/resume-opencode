@@ -56,17 +56,29 @@ async function getOpencodeClient() {
   return opencodeClient;
 }
 
+const AI_CONCURRENCY = Math.max(1, parseInt(process.env.OPENCODE_AI_CONCURRENCY || '1', 10) || 1);
+const AI_CONCURRENCY_POLL_MS = 5;
+
 const aiQueues: Map<string, Promise<unknown>> = new Map();
+const aiInFlight: Map<string, number> = new Map();
+
+export async function runWithConcurrency<T>(key: string, work: () => Promise<T>): Promise<T> {
+  while ((aiInFlight.get(key) || 0) >= AI_CONCURRENCY) {
+    await new Promise<void>(r => setTimeout(r, AI_CONCURRENCY_POLL_MS));
+  }
+  aiInFlight.set(key, (aiInFlight.get(key) || 0) + 1);
+  try {
+    return await work();
+  } finally {
+    aiInFlight.set(key, (aiInFlight.get(key) || 1) - 1);
+  }
+}
 
 function enqueueAIRequest<T>(model: string, work: () => Promise<T>): Promise<T> {
-  let aiQueue = aiQueues.get(model);
-  if (!aiQueue) {
-    aiQueue = Promise.resolve();
-    aiQueues.set(model, aiQueue);
-  }
-  const promise = aiQueue.then(() => work());
-  aiQueues.set(model, promise.catch(() => {}));
-  return promise;
+  const prev = aiQueues.get(model) ?? Promise.resolve();
+  const next = prev.then(() => runWithConcurrency(model, work));
+  aiQueues.set(model, next.catch(() => {}));
+  return next;
 }
 
 function loadEnvProfile(): EnvResumeProfile {
