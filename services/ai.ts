@@ -1,10 +1,12 @@
 import { ResumeData } from './types';
 import { log, logError } from './logger';
 import { DEFAULT_PROFILE, parseDotEnvContent, buildProfileFromEnvVars, EnvResumeProfile, normalizeEnvProfile } from './env';
+import { loadEnv } from './loadEnv';
 import fs from 'fs';
 import path from 'path';
 import { findProjectRoot } from './paths';
 
+loadEnv();
 const projectRoot = findProjectRoot(__dirname);
 
 function sanitizeJobDescription(text: string): string {
