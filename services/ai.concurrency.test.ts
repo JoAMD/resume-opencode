@@ -1,16 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 type RunWithConcurrency = <T>(key: string, work: () => Promise<T>) => Promise<T>;
+type EnqueueAIRequest = <T>(model: string, work: () => Promise<T>) => Promise<T>;
 
-async function loadHelperWithConcurrency(value: string): Promise<RunWithConcurrency> {
+async function loadModule(value: { concurrency?: string; queue?: string }): Promise<{
+  runWithConcurrency: RunWithConcurrency;
+  enqueueAIRequest: EnqueueAIRequest;
+}> {
   vi.resetModules();
-  if (value === '') {
+  if (value.concurrency === undefined) {
     delete process.env.OPENCODE_AI_CONCURRENCY;
   } else {
-    process.env.OPENCODE_AI_CONCURRENCY = value;
+    process.env.OPENCODE_AI_CONCURRENCY = value.concurrency;
+  }
+  if (value.queue === undefined) {
+    delete process.env.OPENCODE_AI_QUEUE;
+  } else {
+    process.env.OPENCODE_AI_QUEUE = value.queue;
   }
   const mod = await import('./ai.js');
-  return mod.runWithConcurrency;
+  return { runWithConcurrency: mod.runWithConcurrency, enqueueAIRequest: mod.enqueueAIRequest };
+}
+
+async function loadHelperWithConcurrency(value: string): Promise<RunWithConcurrency> {
+  const { runWithConcurrency } = await loadModule({ concurrency: value });
+  return runWithConcurrency;
 }
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
@@ -78,10 +92,12 @@ const CASES: Array<{ cap: string; jobs: Job[]; resolveFirstN: number; expectedAf
 describe('runWithConcurrency (per-model slot pool)', () => {
   beforeEach(() => {
     delete process.env.OPENCODE_AI_CONCURRENCY;
+    delete process.env.OPENCODE_AI_QUEUE;
   });
 
   afterEach(() => {
     delete process.env.OPENCODE_AI_CONCURRENCY;
+    delete process.env.OPENCODE_AI_QUEUE;
   });
 
   it.each(CASES)(
@@ -125,5 +141,57 @@ describe('runWithConcurrency (per-model slot pool)', () => {
     });
     expect(secondStarted).toBe(true);
     expect(order).toEqual(['failed', 'ok']);
+  });
+});
+
+describe('enqueueAIRequest (queue toggle)', () => {
+  beforeEach(() => {
+    delete process.env.OPENCODE_AI_CONCURRENCY;
+    delete process.env.OPENCODE_AI_QUEUE;
+  });
+
+  afterEach(() => {
+    delete process.env.OPENCODE_AI_CONCURRENCY;
+    delete process.env.OPENCODE_AI_QUEUE;
+  });
+
+  const DISABLED_VALUES = ['false', 'FALSE', 'False'];
+
+  it.each(DISABLED_VALUES)(
+    'bypasses the slot pool when OPENCODE_AI_QUEUE=%s (regardless of concurrency)',
+    async (queueVal) => {
+      const { enqueueAIRequest } = await loadModule({ concurrency: '1', queue: queueVal });
+      const order: string[] = [];
+      const proms = [deferred<string>(), deferred<string>(), deferred<string>()];
+      const ps = proms.map((p, i) =>
+        enqueueAIRequest(`eqm-off-${queueVal}`, () => p.promise.then(() => { order.push(String(i)); return String(i); }))
+      );
+      await new Promise(r => setTimeout(r, 20));
+      proms.forEach(p => p.resolve(undefined as unknown as string));
+      await Promise.all(ps);
+      expect(order).toEqual(['0', '1', '2']);
+    }
+  );
+
+  it('queues strictly by default (concurrency=1, queue unset)', async () => {
+    const { enqueueAIRequest } = await loadModule({});
+    const order: string[] = [];
+    const a = deferred<string>();
+    const b = deferred<string>();
+
+    const pa = enqueueAIRequest('eqm1', () => a.promise.then(() => { order.push('a'); return 'a'; }));
+    const pb = enqueueAIRequest('eqm1', () => b.promise.then(() => { order.push('b'); return 'b'; }));
+
+    await new Promise(r => setTimeout(r, 20));
+    expect(order).toEqual([]);
+
+    a.resolve(undefined as unknown as string);
+    await pa;
+    await new Promise(r => setTimeout(r, 20));
+    expect(order).toEqual(['a']);
+
+    b.resolve(undefined as unknown as string);
+    await pb;
+    expect(order).toEqual(['a', 'b']);
   });
 });

@@ -54,6 +54,8 @@ Models that don't support structured output write JSON to a file; server polls f
 
 `enqueueAIRequest` in `services/ai.ts` runs all AI calls for the same model through a slot pool. By default the cap is `1` (strictly serial per model), preserving the original behavior. Set `OPENCODE_AI_CONCURRENCY=2` (or `3`) to allow that many calls per model to run in parallel; excess calls queue and wait. Raising it speeds up batch generation but can trigger upstream provider rate limits.
 
+Set `OPENCODE_AI_QUEUE=false` to disable the queue entirely. Every call then runs immediately with no slot cap (`OPENCODE_AI_CONCURRENCY` is ignored). Use this when you want maximum throughput and trust upstream rate limits.
+
 ### Security
 
 - Input sanitization on job descriptions (Unicode, special chars)

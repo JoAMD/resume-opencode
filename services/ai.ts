@@ -60,6 +60,7 @@ async function getOpencodeClient() {
 
 const AI_CONCURRENCY = Math.max(1, parseInt(process.env.OPENCODE_AI_CONCURRENCY || '1', 10) || 1);
 const AI_CONCURRENCY_POLL_MS = 5;
+const AI_QUEUE_ENABLED = (process.env.OPENCODE_AI_QUEUE ?? 'true').toLowerCase() !== 'false';
 
 const aiQueues: Map<string, Promise<unknown>> = new Map();
 const aiInFlight: Map<string, number> = new Map();
@@ -76,7 +77,10 @@ export async function runWithConcurrency<T>(key: string, work: () => Promise<T>)
   }
 }
 
-function enqueueAIRequest<T>(model: string, work: () => Promise<T>): Promise<T> {
+export function enqueueAIRequest<T>(model: string, work: () => Promise<T>): Promise<T> {
+  if (!AI_QUEUE_ENABLED) {
+    return work();
+  }
   const prev = aiQueues.get(model) ?? Promise.resolve();
   const next = prev.then(() => runWithConcurrency(model, work));
   aiQueues.set(model, next.catch(() => {}));
