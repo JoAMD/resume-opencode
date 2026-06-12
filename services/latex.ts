@@ -84,10 +84,19 @@ function buildProjectEntries(projects: unknown): string {
 return items
     .map((project) => {
       const bullets = asArray<string>(project.bullets).map((bullet) => `        \\resumeItem{${esc(bullet)}}`).join('\n');
+      const techStack = toText(project.techStack).trim();
+      if (techStack.length === 0) {
+        return `
+    \\resumeProjectHeading
+      {\\textbf{${esc(project.name)}}}{}
+      \\resumeItemListStart
+${bullets}
+      \\resumeItemListEnd`;
+      }
       return `
     \\resumeSubheading
       {\\textbf{${esc(project.name)}}}{}
-      {${esc(project.techStack)}}{}
+      {${esc(techStack)}}{}
       \\resumeItemListStart
 ${bullets}
       \\resumeItemListEnd`;
