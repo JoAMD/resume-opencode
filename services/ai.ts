@@ -305,7 +305,7 @@ const COMBINED_JSON_SCHEMA = {
 };
 
 const PROMPTS_DIR = path.join(projectRoot, 'prompts');
-const TEMPLATES_DIR = path.join(projectRoot, '..', 'templates');
+const TEMPLATES_DIR = path.join(projectRoot, 'templates');
 
 const SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'resume-system-prompt.txt'), 'utf8');
 const SYSTEM_PROMPT_ROLE_ONLY = fs.readFileSync(path.join(PROMPTS_DIR, 'resume-role-only-system-prompt.txt'), 'utf8');
