@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { normaliseBodyParagraph } from './ai';
+import { applyCoverLetterOverrides, normaliseBodyParagraph } from './ai';
+import { DEFAULT_PROFILE } from './env';
 
 describe('normaliseBodyParagraph', () => {
   it('returns an empty array for undefined', () => {
@@ -47,5 +48,57 @@ describe('normaliseBodyParagraph', () => {
 
   it('returns an empty array for a string of just empty entries', () => {
     expect(normaliseBodyParagraph(['', '   ', null, undefined])).toEqual([]);
+  });
+});
+
+describe('applyCoverLetterOverrides', () => {
+  const baseCL = {
+    dateLine: '17 June 2026',
+    recipientLine: 'Hiring Manager',
+    subjectLine: 'Application for SWE',
+    greeting: 'Dear Hiring Manager,',
+    openingParagraph: 'Opening paragraph.',
+    bodyParagraph: ['Body paragraph one.', 'Body paragraph two.'],
+    closingParagraph: 'Thank you for your consideration.',
+    signoff: 'Kind regards,',
+  };
+
+  it('replaces {{FULL_NAME}} placeholders in the signoff and closingParagraph', () => {
+    const result = applyCoverLetterOverrides({
+      ...baseCL,
+      signoff: 'Yours sincerely, {{FULL_NAME}}',
+      closingParagraph: 'Thanks, {{FULL_NAME}}',
+    });
+
+    expect(result.signoff).not.toContain('{{FULL_NAME}}');
+    expect(result.signoff).toContain(DEFAULT_PROFILE.fullName);
+    expect(result.closingParagraph).not.toContain('{{FULL_NAME}}');
+    expect(result.closingParagraph).toContain(DEFAULT_PROFILE.fullName);
+  });
+
+  it('still scrubs placeholders from earlier fields after the change', () => {
+    const result = applyCoverLetterOverrides({
+      ...baseCL,
+      dateLine: 'Today ({{DATE}})',
+      greeting: 'Hello {{FULL_NAME}}-fan,',
+    });
+
+    expect(result.dateLine).not.toContain('{{DATE}}');
+    expect(result.greeting).not.toContain('{{FULL_NAME}}');
+  });
+
+  it('tolerates missing closingParagraph and signoff', () => {
+    const result = applyCoverLetterOverrides({
+      dateLine: baseCL.dateLine,
+      recipientLine: baseCL.recipientLine,
+      subjectLine: baseCL.subjectLine,
+      greeting: baseCL.greeting,
+      openingParagraph: baseCL.openingParagraph,
+      bodyParagraph: baseCL.bodyParagraph,
+    });
+
+    expect(result.signoff).toBeUndefined();
+    expect(result.closingParagraph).toBeUndefined();
+    expect(result.fullName).toBe(DEFAULT_PROFILE.fullName);
   });
 });
