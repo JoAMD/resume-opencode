@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 import slugify from 'slugify';
 import { generateResumeJSON, generateCoverLetterJSON, generateCombinedJSON, CoverLetterJSON, analyzeATSKeywordsAgainstResume, extractATSKeywordsFromJDViaAI } from '../services/ai';
 import { ResumeData } from '../services/types';
 import { log, logError } from '../services/logger';
 import { buildLatex, buildCoverLetterLatex } from '../services/latex';
 import { compilePDF } from '../services/compiler';
+import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
 
 const router = Router();
@@ -521,7 +523,7 @@ function compileAllTexInDir(targetDir: string): number {
 
 function compileTexFileSync(texPath: string): Buffer {
   const latexSource = fs.readFileSync(texPath, 'utf8');
-  return require('child_process').execSync(
+  return execSync(
     `cd "${path.dirname(texPath)}" && pdflatex -interaction=nonstopmode "${texPath}"`,
     { maxBuffer: 50 * 1024 * 1024 }
   );
@@ -574,7 +576,7 @@ function parseStructuredInput(structuredJSON?: any, structuredPath?: string): Pa
   return { success: true, json: targetJSON, isCoverLetter, sourceDir };
 }
 
-function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourceDir: string | null | undefined): { texUrl: string; pdfUrl: string; txtUrl?: string } {
+export function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourceDir: string | null | undefined): { texUrl: string; pdfUrl: string; txtUrl?: string } {
   const latexSource = isCoverLetter ? buildCoverLetterLatex(targetJSON) : buildLatex(targetJSON);
   const outDir = sourceDir && fs.existsSync(sourceDir) ? sourceDir : path.join(jobsDir, 'last-generated');
   fs.mkdirSync(outDir, { recursive: true });
@@ -613,60 +615,6 @@ function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourc
   }
 
   return response;
-}
-
-const TECTONIC_URL = process.env.TECTONIC_URL || 'http://localhost:4000/compile';
-
-function compilePDFViaTectonic(latexSource: string): Buffer {
-  const result = require('child_process').spawnSync(
-    'curl',
-    ['-sS', '-X', 'POST', '--data-binary', '@-', TECTONIC_URL],
-    {
-      input: latexSource,
-      timeout: 60000,
-      maxBuffer: 50 * 1024 * 1024,
-    }
-  );
-  if (result.status !== 0) {
-    const stderr = result.stderr?.toString() ?? '';
-    throw new Error(`tectonic request failed (exit ${result.status}): ${stderr}`);
-  }
-  const body = result.stdout ?? Buffer.from('');
-  if (body.length < 5 || body.slice(0, 4).toString() !== '%PDF') {
-    throw new Error(`tectonic did not return a PDF: ${body.toString('utf8').slice(0, 500)}`);
-  }
-  return body;
-}
-
-function readLatexLogTail(logPath: string): string {
-  if (!fs.existsSync(logPath)) return '';
-  return fs.readFileSync(logPath, 'utf8').split('\n').slice(-40).join('\n');
-}
-
-function reportLatexFailure(texPath: string, err: unknown): never {
-  const message = err instanceof Error ? err.message : String(err);
-  const stderr = (err as { stderr?: Buffer | null })?.stderr?.toString() ?? '';
-  const logTail = readLatexLogTail(texPath.replace(/\.tex$/i, '.log'));
-  console.error(`[compilePDFSyncFile] pdflatex failed for ${texPath}\n${message}\n${stderr}\n--- log tail ---\n${logTail}`);
-  throw new Error(`pdflatex failed for ${path.basename(texPath)}: ${message}`);
-}
-
-function compilePDFSyncFile(texPath: string): Buffer {
-  try {
-    require('child_process').execFileSync(
-      'pdflatex',
-      ['-interaction=nonstopmode', '-halt-on-error', texPath],
-      { cwd: path.dirname(texPath), timeout: 60000, stdio: ['ignore', 'ignore', 'pipe'] }
-    );
-  } catch (err) {
-    reportLatexFailure(texPath, err);
-  }
-
-  const pdfPath = texPath.replace(/\.tex$/i, '.pdf');
-  if (!fs.existsSync(pdfPath)) {
-    throw new Error(`pdflatex produced no PDF for ${path.basename(texPath)}`);
-  }
-  return fs.readFileSync(pdfPath);
 }
 
 function renameJobDir(targetDir: string, prefix: string): string | null {
