@@ -725,6 +725,23 @@ function applyProfileOverrides(json: any): ResumeData {
   return updated;
 }
 
+const COVER_LETTER_STRING_FIELDS: Array<keyof CoverLetterJSON> = [
+  'dateLine', 'recipientLine', 'subjectLine', 'greeting', 'openingParagraph',
+];
+
+function assertValidCoverLetter(value: unknown): asserts value is Partial<CoverLetterJSON> & { bodyParagraph: string | string[] } {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid cover letter from OpenCode: missing coverLetter object');
+  }
+  const raw = value as Record<string, unknown>;
+  const missing = COVER_LETTER_STRING_FIELDS.filter((field) => typeof raw[field] !== 'string');
+  if (missing.length > 0 || raw.bodyParagraph == null) {
+    throw new Error(
+      `Invalid cover letter from OpenCode: missing or non-string field(s): ${missing.join(', ') || 'bodyParagraph'}`
+    );
+  }
+}
+
 function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bodyParagraph: string | string[] }): CoverLetterJSON {
   const updated = { ...json };
   updated.fullName = ENV_PROFILE.fullName;
@@ -855,8 +872,11 @@ export async function generateCombinedJSON(
       throw new Error('Invalid response from OpenCode');
     }
 
+    assertValidCoverLetter(result.structured.coverLetter);
+    const coverLetterRaw = result.structured.coverLetter;
+
     const resume = applyProfileOverrides(result.structured.resume);
-    const coverLetter = applyCoverLetterOverrides(result.structured.coverLetter);
+    const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
       resume,
