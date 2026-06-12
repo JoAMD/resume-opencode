@@ -751,7 +751,7 @@ function assertValidCoverLetter(value: unknown): asserts value is Partial<CoverL
   }
 }
 
-function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bodyParagraph: string | string[] }): CoverLetterJSON {
+export function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bodyParagraph: string | string[] }): CoverLetterJSON {
   const updated = { ...json };
   updated.fullName = ENV_PROFILE.fullName;
   updated.email = ENV_PROFILE.email;
@@ -775,6 +775,12 @@ function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bodyParagr
   updated.greeting = replacePlaceholders(updated.greeting);
   updated.openingParagraph = replacePlaceholders(updated.openingParagraph);
   updated.bodyParagraph = normaliseBodyParagraph(json.bodyParagraph).map(replacePlaceholders);
+  if (typeof updated.closingParagraph === 'string') {
+    updated.closingParagraph = replacePlaceholders(updated.closingParagraph);
+  }
+  if (typeof updated.signoff === 'string') {
+    updated.signoff = replacePlaceholders(updated.signoff);
+  }
 
   return updated as CoverLetterJSON;
 }
