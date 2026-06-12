@@ -52,6 +52,12 @@ vi.mock('../services/latex', () => ({
   buildCoverLetterLatex: () => '\\documentclass{article}\\begin{document}cover\\end{document}',
 }));
 
+vi.mock('../services/env', () => ({
+  parseDotEnvContent: () => ({}),
+  buildProfileFromEnvVars: () => ({}),
+  normalizeEnvProfile: () => ({}),
+}));
+
 const TECTONIC_URL = 'http://localhost:4000/compile';
 
 describe('compilePDFViaTectonic', () => {
@@ -78,7 +84,7 @@ describe('compilePDFViaTectonic', () => {
   it('throws with stderr when curl exits non-zero', async () => {
     spawnSync.mockReturnValue({ status: 7, stdout: Buffer.from(''), stderr: Buffer.from('connection refused') });
 
-    const { compilePDFViaTectonic } = await import('./generate.js');
+    const { compilePDFViaTectonic } = await import('../services/texCompiler.js');
 
     expect(() => compilePDFViaTectonic('any source')).toThrow(/tectonic request failed \(exit 7\): connection refused/);
   });
@@ -90,7 +96,7 @@ describe('compilePDFViaTectonic', () => {
       stderr: Buffer.from(''),
     });
 
-    const { compilePDFViaTectonic } = await import('./generate.js');
+    const { compilePDFViaTectonic } = await import('../services/texCompiler.js');
 
     expect(() => compilePDFViaTectonic('any source')).toThrow(/tectonic did not return a PDF: Tectonic compile error/);
   });
@@ -98,7 +104,7 @@ describe('compilePDFViaTectonic', () => {
   it('throws when the response is too short to be a PDF', async () => {
     spawnSync.mockReturnValue({ status: 0, stdout: Buffer.from('nope'), stderr: Buffer.from('') });
 
-    const { compilePDFViaTectonic } = await import('./generate.js');
+    const { compilePDFViaTectonic } = await import('../services/texCompiler.js');
 
     expect(() => compilePDFViaTectonic('any source')).toThrow(/tectonic did not return a PDF/);
   });
