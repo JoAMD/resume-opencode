@@ -576,20 +576,19 @@ function parseStructuredInput(structuredJSON?: any, structuredPath?: string): Pa
 
 function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourceDir: string | null | undefined): { texUrl: string; pdfUrl: string; txtUrl?: string } {
   const latexSource = isCoverLetter ? buildCoverLetterLatex(targetJSON) : buildLatex(targetJSON);
-  const date = new Date().toISOString().slice(0, 10);
-  const tmpDir = path.join(jobsDir, `structured-${date}`);
-  fs.mkdirSync(tmpDir, { recursive: true });
+  const outDir = sourceDir && fs.existsSync(sourceDir) ? sourceDir : path.join(jobsDir, 'last-generated');
+  fs.mkdirSync(outDir, { recursive: true });
 
   const texFilename = isCoverLetter ? 'cover-letter.tex' : 'resume.tex';
   const pdfFilename = isCoverLetter ? 'cover-letter.pdf' : 'resume.pdf';
 
-  saveJobFile(tmpDir, texFilename, latexSource);
+  saveJobFile(outDir, texFilename, latexSource);
   const pdfBuffer = compilePDFViaTectonic(latexSource);
-  saveJobFile(tmpDir, pdfFilename, pdfBuffer);
+  saveJobFile(outDir, pdfFilename, pdfBuffer);
 
   const response: { texUrl: string; pdfUrl: string; txtUrl?: string } = {
-    texUrl: `/jobs/${path.basename(tmpDir)}/${texFilename}`,
-    pdfUrl: `/jobs/${path.basename(tmpDir)}/${pdfFilename}`,
+    texUrl: `/jobs/${path.basename(outDir)}/${texFilename}`,
+    pdfUrl: `/jobs/${path.basename(outDir)}/${pdfFilename}`,
   };
 
   if (isCoverLetter) {
@@ -609,23 +608,11 @@ function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean, sourc
       targetJSON.signoff,
       targetJSON.fullName,
     ].filter(Boolean).join('\n');
-    saveJobFile(tmpDir, 'cover-letter.txt', txtContent);
-    response.txtUrl = `/jobs/${path.basename(tmpDir)}/cover-letter.txt`;
-
-    if (sourceDir && fs.existsSync(sourceDir)) {
-      saveJobFile(sourceDir, 'cover-letter.txt', txtContent);
-    }
+    saveJobFile(outDir, 'cover-letter.txt', txtContent);
+    response.txtUrl = `/jobs/${path.basename(outDir)}/cover-letter.txt`;
   }
 
   return response;
-}
-
-function compilePDFSync(latexSource: string): Buffer {
-  const tmpDir = path.join(jobsDir, 'tmp-compile');
-  fs.mkdirSync(tmpDir, { recursive: true });
-  const tmpTex = path.join(tmpDir, 'tmp.tex');
-  fs.writeFileSync(tmpTex, latexSource, 'utf8');
-  return compilePDFSyncFile(tmpTex);
 }
 
 const TECTONIC_URL = process.env.TECTONIC_URL || 'http://localhost:4000/compile';
