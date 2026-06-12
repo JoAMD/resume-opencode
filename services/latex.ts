@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { findProjectRoot } from './paths';
 import { ResumeData, ResumeEducation, ResumeExperience, ResumeProject } from './types';
+import { normaliseBodyParagraph } from './ai';
 
 const projectRoot = findProjectRoot(__dirname);
 const TEMPLATE_PATH = path.join(projectRoot, 'templates', 'resume.tex.template');
@@ -173,7 +174,7 @@ export function buildCoverLetterLatex(cl: {
   subjectLine: string;
   greeting: string;
   openingParagraph: string;
-  bodyParagraph: string;
+  bodyParagraph: string | string[];
   closingParagraph: string;
   signoff: string;
 }): string {
@@ -182,6 +183,13 @@ export function buildCoverLetterLatex(cl: {
 
   const replace = (ph: string, value: string) =>
     template = template.replace(new RegExp(`\\{\\{\\{${ph}\\}\\}\\}`, 'g'), esc(value));
+  const replaceRaw = (ph: string, value: string) =>
+    template = template.replace(new RegExp(`\\{\\{\\{${ph}\\}\\}\\}`, 'g'), value);
+
+  const bodyParagraphs = normaliseBodyParagraph(cl.bodyParagraph);
+  const bodyLatex = bodyParagraphs.length > 1
+    ? bodyParagraphs.map((p) => esc(p)).join('\\par\\vspace{0.6em}\n')
+    : esc(bodyParagraphs[0] ?? '');
 
   replace('FULL_NAME', cl.fullName);
   replace('EMAIL', cl.email);
@@ -192,7 +200,7 @@ export function buildCoverLetterLatex(cl: {
   replace('SUBJECT_LINE', cl.subjectLine);
   replace('GREETING', cl.greeting);
   replace('OPENING_PARAGRAPH', cl.openingParagraph);
-  replace('BODY_PARAGRAPH', cl.bodyParagraph);
+  replaceRaw('BODY_PARAGRAPH', bodyLatex);
   replace('CLOSING_PARAGRAPH', cl.closingParagraph);
   replace('SIGNOFF', cl.signoff);
 

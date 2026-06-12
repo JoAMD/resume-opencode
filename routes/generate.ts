@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import slugify from 'slugify';
-import { generateResumeJSON, generateCoverLetterJSON, generateCombinedJSON, CoverLetterJSON, analyzeATSKeywordsAgainstResume, extractATSKeywordsFromJDViaAI } from '../services/ai';
+import { generateResumeJSON, generateCoverLetterJSON, generateCombinedJSON, CoverLetterJSON, normaliseBodyParagraph, analyzeATSKeywordsAgainstResume, extractATSKeywordsFromJDViaAI } from '../services/ai';
 import { ResumeData } from '../services/types';
 import { log, logError } from '../services/logger';
 import { buildLatex, buildCoverLetterLatex } from '../services/latex';
@@ -124,6 +124,7 @@ function resolveTargetDir(params: {
 }
 
 function formatCoverLetterText(cl: CoverLetterJSON): string {
+  const bodyParagraphs = normaliseBodyParagraph(cl.bodyParagraph);
   return [
     cl.dateLine,
     cl.recipientLine,
@@ -133,7 +134,7 @@ function formatCoverLetterText(cl: CoverLetterJSON): string {
     '',
     cl.openingParagraph,
     '',
-    cl.bodyParagraph,
+    ...bodyParagraphs,
     '',
     cl.closingParagraph,
     '',
@@ -594,6 +595,7 @@ export function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean
   };
 
   if (isCoverLetter) {
+    const bodyParagraphs = normaliseBodyParagraph(targetJSON.bodyParagraph);
     const txtContent = [
       targetJSON.dateLine,
       targetJSON.recipientLine,
@@ -603,7 +605,7 @@ export function buildLatexFromStructured(targetJSON: any, isCoverLetter: boolean
       '',
       targetJSON.openingParagraph,
       '',
-      targetJSON.bodyParagraph,
+      ...bodyParagraphs,
       '',
       targetJSON.closingParagraph,
       '',

@@ -212,7 +212,13 @@ const COVER_LETTER_JSON_SCHEMA = {
     subjectLine: { type: "string", description: "Email subject line" },
     greeting: { type: "string", description: "Salutation (e.g., 'Dear Hiring Manager,')" },
     openingParagraph: { type: "string", description: "Opening paragraph" },
-    bodyParagraph: { type: "string", description: "Body paragraph with key points" },
+    bodyParagraph: {
+      oneOf: [
+        { type: "array", items: { type: "string" }, description: "Array of body paragraphs (preferred)." },
+        { type: "string", description: "Body paragraphs concatenated with blank lines." }
+      ],
+      description: "Body content. Use an array of paragraphs (preferred) or a single string with blank-line separated paragraphs."
+    },
     closingParagraph: { type: "string", description: "Closing paragraph" },
     signoff: { type: "string", description: "Sign-off (e.g., 'Sincerely,')" }
   },
@@ -294,7 +300,13 @@ const COMBINED_JSON_SCHEMA = {
         subjectLine: { type: "string" },
         greeting: { type: "string" },
         openingParagraph: { type: "string" },
-        bodyParagraph: { type: "string" },
+        bodyParagraph: {
+          oneOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "string" }
+          ],
+          description: "Body paragraphs. Use an array of paragraphs (preferred) or a single string with blank-line separated paragraphs."
+        },
         closingParagraph: { type: "string" },
         signoff: { type: "string" }
       },
@@ -675,10 +687,25 @@ export type CoverLetterJSON = {
   subjectLine: string;
   greeting: string;
   openingParagraph: string;
-  bodyParagraph: string;
+  bodyParagraph: string[];
   closingParagraph: string;
   signoff: string;
 };
+
+export function normaliseBodyParagraph(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+      .filter((entry) => entry.length > 0);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/\n\s*\n+/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+  return [];
+}
 
 function applyProfileOverrides(json: any): ResumeData {
   const updated = { ...json };
@@ -698,33 +725,32 @@ function applyProfileOverrides(json: any): ResumeData {
   return updated;
 }
 
-function applyCoverLetterOverrides(json: CoverLetterJSON): CoverLetterJSON {
+function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bodyParagraph: string | string[] }): CoverLetterJSON {
   const updated = { ...json };
   updated.fullName = ENV_PROFILE.fullName;
   updated.email = ENV_PROFILE.email;
   updated.phone = ENV_PROFILE.phone;
   updated.linkedinUrl = ENV_PROFILE.linkedinUrl;
   updated.linkedinDisplay = ENV_PROFILE.linkedinDisplay;
-  
+
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  
+
   const replacePlaceholders = (text: string): string => {
     return text
       .replace(/\{\{DATE\}\}/g, dateStr)
       .replace(/\{\{FULL_NAME\}\}/g, ENV_PROFILE.fullName)
       .replace(/\{\{EMAIL\}\}/g, ENV_PROFILE.email);
   };
-  
+
   updated.dateLine = replacePlaceholders(updated.dateLine);
   updated.recipientLine = replacePlaceholders(updated.recipientLine);
   updated.subjectLine = replacePlaceholders(updated.subjectLine);
   updated.greeting = replacePlaceholders(updated.greeting);
   updated.openingParagraph = replacePlaceholders(updated.openingParagraph);
-  updated.bodyParagraph = replacePlaceholders(updated.bodyParagraph);
-  updated.closingParagraph = replacePlaceholders(updated.closingParagraph);
-  
-  return updated;
+  updated.bodyParagraph = normaliseBodyParagraph(json.bodyParagraph).map(replacePlaceholders);
+
+  return updated as CoverLetterJSON;
 }
 
 export async function generateResumeJSON(
