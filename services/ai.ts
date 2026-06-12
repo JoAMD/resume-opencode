@@ -61,6 +61,7 @@ async function getOpencodeClient() {
 const AI_CONCURRENCY = Math.max(1, parseInt(process.env.OPENCODE_AI_CONCURRENCY || '1', 10) || 1);
 const AI_CONCURRENCY_POLL_MS = 5;
 const AI_QUEUE_ENABLED = (process.env.OPENCODE_AI_QUEUE ?? 'true').toLowerCase() !== 'false';
+const AI_PROMPT_TIMEOUT_MS = Math.max(1000, parseInt(process.env.OPENCODE_AI_PROMPT_TIMEOUT_MS || '600000', 10) || 600000);
 
 const aiQueues: Map<string, Promise<unknown>> = new Map();
 const aiInFlight: Map<string, number> = new Map();
@@ -586,18 +587,25 @@ async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult
   return null;
 }
 
-async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any): Promise<any> {
-  const result = await client.session.prompt({
-    path: { id: sessionId },
-    body: promptBody
-  });
+async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any, timeoutMs: number = AI_PROMPT_TIMEOUT_MS): Promise<any> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`OpenCode prompt timed out after ${timeoutMs}ms`)), timeoutMs);
+  try {
+    const result = await client.session.prompt({
+      path: { id: sessionId },
+      body: promptBody,
+      signal: ac.signal,
+    } as any);
 
-  if (result.error) {
-    throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
+    if (result.error) {
+      throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
+    }
+
+    console.log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000));
+    return result;
+  } finally {
+    clearTimeout(timer);
   }
-
-  console.log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000));
-  return result;
 }
 
 function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
@@ -628,6 +636,7 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
     console.log('Model:', modelToUse);
     console.log('Structured output:', useStructuredOutput ? 'yes' : 'no');
     console.log('Prompt file:', promptFile);
+    console.log('Prompt timeout (ms):', AI_PROMPT_TIMEOUT_MS);
     console.log('=====================================\n');
 
     try {
