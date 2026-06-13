@@ -9,3 +9,9 @@ prompts/
 templates
 templates/
 scripts/
+.ocx/
+.opencode/ocx.jsonc
+.opencode/package.json
+.opencode/plugins/
+.opencode/worktree.jsonc
+ISOLATION_PLAN.md
