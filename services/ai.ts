@@ -726,9 +726,7 @@ function applyProfileOverrides(json: any): ResumeData {
   
   if (updated.education && updated.education.length >= 0) {
     updated.education[0] = { ...updated.education[0], ...ENV_PROFILE.education[0] };
-    if (updated.education[1]) {
-      updated.education[1] = { ...updated.education[1], ...ENV_PROFILE.education[1] };
-    }
+    updated.education[1] = { ...(updated.education[1] || {}), ...ENV_PROFILE.education[1] };
   }
   
   return updated;
