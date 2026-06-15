@@ -168,7 +168,7 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const jobDir = createJobDir(companyName, roleName);
+    const jobDir = createJobDir(companyName, roleName, body.modelSelect);
     const options = buildGenerationOptions(body, jobDir.jobDir);
 
     saveJobFile(jobDir.jobDir, 'job-description.txt', jobDescription ?? '');
@@ -393,9 +393,13 @@ function validateGenerateRequest(body: GenerateRequestBody): string | null {
   return null;
 }
 
-function createJobDir(companyName: string, roleName: string): { jobDir: string; slug: string } {
-  const date = new Date().toISOString().slice(0, 10);
-  const slug = slugify(`${companyName}-${roleName}-${date}`, { lower: true, strict: true });
+function createJobDir(companyName: string, roleName: string, model?: string): { jobDir: string; slug: string } {
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+  const modelSegment = model ? slugify(model, { lower: true, strict: true }) : '';
+  const parts = [companyName, roleName, date, time, modelSegment].filter(Boolean);
+  const slug = slugify(parts.join('-'), { lower: true, strict: true });
   const jobDir = path.join(jobsDir, slug);
   fs.mkdirSync(jobDir, { recursive: true });
   return { jobDir, slug };

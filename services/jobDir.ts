@@ -15,10 +15,14 @@ export function getJobsDir(): string {
   return path.join(projectRoot, 'jobs');
 }
 
-export function createJobDirectory(companyName: string, roleName: string, prefix = ''): JobContext {
+export function createJobDirectory(companyName: string, roleName: string, prefix = '', model?: string): JobContext {
   const jobsDir = getJobsDir();
-  const date = new Date().toISOString().slice(0, 10);
-  const baseSlug = slugify(`${prefix}${companyName}-${roleName}-${date}`, { lower: true, strict: true });
+  const now = new Date();
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+  const modelSegment = model ? slugify(model, { lower: true, strict: true }) : '';
+  const parts = [prefix, companyName, roleName, date, time, modelSegment].filter(Boolean);
+  const baseSlug = slugify(parts.join('-'), { lower: true, strict: true });
   const jobDir = path.join(jobsDir, baseSlug);
   fs.mkdirSync(jobDir, { recursive: true });
   return { companyName, roleName, jobDir, slug: baseSlug };
