@@ -12,19 +12,13 @@ const projectRoot = findProjectRoot(__dirname);
 function sanitizeJobDescription(text: string): string {
   if (!text) return text;
   return text
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2013]/g, '-')
-    .replace(/[\u2014]/g, '-')
-    .replace(/[\u2026]/g, '...')
-    .replace(/[\u00A0]/g, ' ')
-    .replaceAll('|', ' ')
-    .replaceAll('`', "'")
-    .replaceAll('\\', ' ')
-    .replaceAll('[', '(')
-    .replaceAll(']', ')')
-    .replaceAll('{', '(')
-    .replaceAll('}', ')')
+    .normalize('NFKC')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u2013\u2014\u2212]/g, '-')
+    .replace(/[\|]/g, ' ')
+    .replace(/[`]/g, "'")
+    .replace(/[\\]/g, ' ')
+    .replace(/[\[\]{}]/g, (c) => ({ '[': '(', ']': ')', '{': '(', '}': ')' }[c]!))
     .trim();
 }
 
