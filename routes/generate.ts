@@ -22,6 +22,7 @@ router.use((req, _res, next) => {
 
 type GenerateRequestBody = {
   jobDescription?: string;
+  fullJD?: string;
   companyName?: string;
   roleName?: string;
   extraNotes?: string;
@@ -29,6 +30,7 @@ type GenerateRequestBody = {
   coverOutput?: 'pdf' | 'txt' | 'none';
   lowTokenMode?: boolean;
   modelSelect?: string;
+  modelPreference?: string;
   useStarMethodForGovtRoles?: boolean;
   resumeType?: 'software' | 'qa';
   useCombinedGeneration?: boolean;
@@ -88,6 +90,50 @@ function saveJobFile(dirPath: string, filename: string, content: string | Buffer
   } else {
     fs.writeFileSync(filePath, content, 'utf8');
   }
+}
+
+const RESUME_TYPE_LABELS: Record<string, string> = {
+  software: 'Software Engineer',
+  qa: 'QA Engineer',
+};
+
+const MODEL_PREFERENCE_LABELS: Record<string, string> = {
+  auto: 'Auto (default)',
+  'non-premium': 'Non-premium only',
+};
+
+const COVER_OUTPUT_LABELS: Record<string, string> = {
+  pdf: 'PDF (also saves LaTeX)',
+  txt: 'TXT only',
+  none: 'None',
+};
+
+function formatOtherInput(body: GenerateRequestBody): string {
+  const lines: string[] = [];
+  lines.push(`Resume Type: ${RESUME_TYPE_LABELS[body.resumeType ?? ''] ?? body.resumeType ?? ''}`);
+  lines.push('');
+  lines.push(`Company Name: ${body.companyName ?? ''}`);
+  lines.push('');
+  lines.push(`Role / Title: ${body.roleName ?? ''}`);
+  lines.push('');
+  lines.push('Job Description:');
+  lines.push(body.jobDescription ? '(see job-description.txt)' : '(empty)');
+  lines.push('');
+  lines.push(`Generate based on role title only: ${body.generateWithoutJD ? 'yes' : 'no'}`);
+  lines.push('');
+  lines.push('Extra Notes:');
+  lines.push(body.extraNotes ?? '');
+  lines.push('');
+  lines.push(`Model Mode: ${MODEL_PREFERENCE_LABELS[body.modelPreference ?? ''] ?? body.modelPreference ?? ''}`);
+  lines.push('');
+  lines.push(`Model: ${body.modelSelect ?? ''}`);
+  lines.push('');
+  lines.push(`Cover Letter Output: ${COVER_OUTPUT_LABELS[body.coverOutput ?? ''] ?? body.coverOutput ?? ''}`);
+  lines.push('');
+  lines.push(`Low-token test mode: ${body.lowTokenMode ? 'yes' : 'no'}`);
+  lines.push(`STAR method for govt roles: ${body.useStarMethodForGovtRoles ? 'yes' : 'no'}`);
+  lines.push(`Use combined generation: ${body.useCombinedGeneration ? 'yes' : 'no'}`);
+  return lines.join('\n') + '\n';
 }
 
 function resolveTargetDir(params: {
@@ -172,6 +218,10 @@ router.post('/', async (req, res) => {
     const options = buildGenerationOptions(body, jobDir.jobDir);
 
     saveJobFile(jobDir.jobDir, 'job-description.txt', jobDescription ?? '');
+    if (body.fullJD && body.fullJD.trim()) {
+      saveJobFile(jobDir.jobDir, 'full-jd.txt', body.fullJD);
+    }
+    saveJobFile(jobDir.jobDir, 'other-input.txt', formatOtherInput(body));
     const taskId = createTaskId();
     taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
     res.json({ taskId, jobDir: jobDir.slug });
@@ -396,7 +446,7 @@ function validateGenerateRequest(body: GenerateRequestBody): string | null {
 function createJobDir(companyName: string, roleName: string, model?: string): { jobDir: string; slug: string } {
   const now = new Date();
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}-${String(now.getMilliseconds()).padStart(3, '0')}`;
   const modelSegment = model ? slugify(model, { lower: true, strict: true }) : '';
   const parts = [companyName, roleName, date, time, modelSegment].filter(Boolean);
   const slug = slugify(parts.join('-'), { lower: true, strict: true });

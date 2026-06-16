@@ -19,7 +19,7 @@ export function createJobDirectory(companyName: string, roleName: string, prefix
   const jobsDir = getJobsDir();
   const now = new Date();
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+  const time = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}-${String(now.getMilliseconds()).padStart(3, '0')}`;
   const modelSegment = model ? slugify(model, { lower: true, strict: true }) : '';
   const parts = [prefix, companyName, roleName, date, time, modelSegment].filter(Boolean);
   const baseSlug = slugify(parts.join('-'), { lower: true, strict: true });
