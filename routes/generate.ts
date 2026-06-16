@@ -280,7 +280,8 @@ router.post('/coverLetter', async (req, res) => {
     const latexSource = buildCoverLetterLatex(coverLetterJSON);
     saveJobFile(jobDir, 'cover-letter.tex', latexSource);
 
-    if (coverOutput === 'txt') {
+    const effectiveCoverOutput = resolveCoverOutput(coverOutput);
+    if (effectiveCoverOutput === 'txt') {
       const txtContent = formatCoverLetterText(coverLetterJSON);
       saveJobFile(jobDir, 'cover-letter.txt', txtContent);
       res.json({ txtUrl: `/jobs/${path.basename(jobDir)}/cover-letter.txt` });
@@ -455,6 +456,13 @@ function createJobDir(companyName: string, roleName: string, model?: string): { 
   return { jobDir, slug };
 }
 
+function resolveCoverOutput(coverOutput: 'pdf' | 'txt' | 'none' | '' | undefined): 'pdf' | 'txt' | 'none' {
+  if (coverOutput === 'pdf' || coverOutput === 'txt' || coverOutput === 'none') {
+    return coverOutput;
+  }
+  return 'pdf';
+}
+
 function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
   return {
     lowTokenMode: Boolean(body.lowTokenMode),
@@ -462,15 +470,17 @@ function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
     promptLogDir: jobDirPath,
     useStarMethodForGovtRoles: Boolean(body.useStarMethodForGovtRoles),
     resumeType: body.resumeType as 'software' | 'qa' | undefined,
+    coverOutput: resolveCoverOutput(body.coverOutput),
   };
 }
 
 async function executeGeneration(
   jobDir: { jobDir: string; slug: string },
   options: ReturnType<typeof buildGenerationOptions>,
-  input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string; coverOutput?: string; useCombinedGeneration?: boolean }
+  input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string; coverOutput?: 'pdf' | 'txt' | 'none' | ''; useCombinedGeneration?: boolean }
 ): Promise<Record<string, unknown>> {
-  const { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration } = input;
+  const { jobDescription, companyName, roleName, extraNotes, useCombinedGeneration } = input;
+  const coverOutput = resolveCoverOutput(input.coverOutput);
 
   let resumeJSON: ResumeData;
   let coverLetterJSON: CoverLetterJSON | undefined;
@@ -478,7 +488,7 @@ async function executeGeneration(
 
   const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
 
-  if (useCombinedGeneration !== false && coverOutput && coverOutput !== 'none') {
+  if (useCombinedGeneration !== false && coverOutput !== 'none') {
     const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', companyName ?? '', roleName ?? '', false, options);
     resumeJSON = combined.resume;
     coverLetterJSON = combined.coverLetter;
