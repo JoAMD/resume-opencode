@@ -607,10 +607,27 @@ async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult
   return null;
 }
 
+async function maybeApplyDebugSleep(signal: AbortSignal): Promise<void> {
+  const debugSleepMs = Math.max(0, parseInt(process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS || '0', 10) || 0);
+  if (debugSleepMs <= 0) return;
+  log('DEBUG: sleeping for', debugSleepMs, 'ms before client.session.prompt (simulate slow upstream)');
+  await new Promise<void>((resolve) => {
+    const sleepTimer = setTimeout(resolve, debugSleepMs);
+    signal.addEventListener('abort', () => {
+      clearTimeout(sleepTimer);
+      resolve();
+    });
+  });
+  if (signal.aborted) {
+    throw signal.reason || new Error('Aborted during debug sleep');
+  }
+}
+
 async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any, timeoutMs: number = AI_PROMPT_TIMEOUT_MS): Promise<any> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`OpenCode prompt timed out after ${timeoutMs}ms`)), timeoutMs);
   try {
+    await maybeApplyDebugSleep(ac.signal);
     const result = await client.session.prompt({
       path: { id: sessionId },
       body: promptBody,

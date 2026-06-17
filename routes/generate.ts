@@ -768,4 +768,48 @@ async function executeATSAnalysis(input: ExecuteATSAnalysisInput): Promise<{ ana
   return { analysis: atsResult };
 }
 
+if ((process.env.ENABLE_DEBUG_ROUTES ?? '').toLowerCase() === 'true') {
+  function readDebugSleepMs(body: any): number {
+    return Math.max(0, parseInt(String(body?.sleepMs ?? 0), 10) || 0);
+  }
+
+  function withDebugSleep<T>(sleepMs: number, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS;
+    process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS = String(sleepMs);
+    const restore = () => {
+      if (previous === undefined) delete process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS;
+      else process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS = previous;
+    };
+    return fn().finally(restore);
+  }
+
+  function describeError(err: any) {
+    return {
+      error: err?.message ?? String(err),
+      name: err?.name,
+      code: err?.cause?.code,
+    };
+  }
+
+  router.post('/debug/slow-prompt', async (req, res) => {
+    const sleepMs = readDebugSleepMs(req.body);
+    const start = Date.now();
+    log('debug: /debug/slow-prompt sleepMs=', sleepMs);
+    try {
+      const result = await withDebugSleep(sleepMs, () =>
+        generateResumeJSON(
+          req.body?.jobDescription ?? 'debug jd',
+          req.body?.extraNotes ?? '',
+          { companyName: 'DebugCo', roleName: 'DebugSWE', promptLogDir: '/tmp' },
+          { modelSelect: req.body?.modelSelect ?? 'opencode/gpt-5-nano' }
+        )
+      );
+      res.json({ ok: true, elapsedMs: Date.now() - start, name: result.name });
+    } catch (err: any) {
+      logError('debug: /debug/slow-prompt error:', err);
+      res.status(500).json({ ok: false, elapsedMs: Date.now() - start, ...describeError(err) });
+    }
+  });
+}
+
 export default router;
