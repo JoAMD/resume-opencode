@@ -39,16 +39,30 @@ function getAuthHeader() {
     return `Basic ${credentials}`;
 }
 
+const OPENCODE_CLIENT_KEEPALIVE = (process.env.OPENCODE_CLIENT_KEEPALIVE ?? 'false').toLowerCase() !== 'true';
+const OPENCODE_CLIENT_ROTATE_AFTER = Math.max(1, parseInt(process.env.OPENCODE_CLIENT_ROTATE_AFTER || '50', 10) || 50);
+let opencodeClientRequestCount = 0;
+
 async function getOpencodeClient() {
-  if (!opencodeClient) {
+  if (
+    !opencodeClient ||
+    opencodeClientRequestCount >= OPENCODE_CLIENT_ROTATE_AFTER
+  ) {
+    if (opencodeClient) {
+      log('Rotating OpenCode client after', opencodeClientRequestCount, 'requests to release keep-alive sockets');
+    }
+    opencodeClient = null;
+    opencodeClientRequestCount = 0;
     const sdk = await getSdk();
     opencodeClient = sdk.createOpencodeClient({
       baseUrl: `http://${process.env.OPENCODE_HOSTNAME || 'localhost'}:${process.env.OPENCODE_PORT || '4096'}`,
       headers: {
         'Authorization': getAuthHeader(),
       },
+      keepalive: OPENCODE_CLIENT_KEEPALIVE,
     });
   }
+  opencodeClientRequestCount++;
   return opencodeClient;
 }
 
@@ -442,6 +456,18 @@ async function createOpencodeSession(client: any, model: string): Promise<string
   return session.data?.id || session.id;
 }
 
+async function deleteOpencodeSession(client: any, sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  try {
+    const result = await client.session.delete({ path: { id: sessionId } });
+    if (result?.error) {
+      logError('Session delete error (non-fatal):', result.error);
+    }
+  } catch (err) {
+    logError('Session delete threw (non-fatal):', err);
+  }
+}
+
 function buildPromptBody(fullPrompt: string, jsonSchema?: object, useStructuredOutput?: boolean, model?: string) {
   const promptBody: any = {
     parts: [{ type: "text", text: fullPrompt }]
@@ -581,10 +607,27 @@ async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult
   return null;
 }
 
+async function maybeApplyDebugSleep(signal: AbortSignal): Promise<void> {
+  const debugSleepMs = Math.max(0, parseInt(process.env.OPENCODE_DEBUG_PROMPT_SLEEP_MS || '0', 10) || 0);
+  if (debugSleepMs <= 0) return;
+  log('DEBUG: sleeping for', debugSleepMs, 'ms before client.session.prompt (simulate slow upstream)');
+  await new Promise<void>((resolve) => {
+    const sleepTimer = setTimeout(resolve, debugSleepMs);
+    signal.addEventListener('abort', () => {
+      clearTimeout(sleepTimer);
+      resolve();
+    });
+  });
+  if (signal.aborted) {
+    throw signal.reason || new Error('Aborted during debug sleep');
+  }
+}
+
 async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any, timeoutMs: number = AI_PROMPT_TIMEOUT_MS): Promise<any> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`OpenCode prompt timed out after ${timeoutMs}ms`)), timeoutMs);
   try {
+    await maybeApplyDebugSleep(ac.signal);
     const result = await client.session.prompt({
       path: { id: sessionId },
       body: promptBody,
@@ -633,11 +676,13 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
     console.log('Prompt timeout (ms):', AI_PROMPT_TIMEOUT_MS);
     console.log('=====================================\n');
 
+    let client: any = null;
+    let sessionId: string | null = null;
     try {
-      const client = await getOpencodeClient();
+      client = await getOpencodeClient();
       console.log('Creating session in:', projectRoot);
 
-      const sessionId = await createOpencodeSession(client, modelToUse);
+      sessionId = await createOpencodeSession(client, modelToUse);
       const promptBody = buildPromptBody(fullPrompt, jsonSchema, useStructuredOutput, model);
 
       const result = await executeOpencodePrompt(client, sessionId, promptBody);
@@ -675,6 +720,10 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
     } catch (err) {
       console.log('[AI ERROR]', err);
       reject(err);
+    } finally {
+      if (client && sessionId) {
+        await deleteOpencodeSession(client, sessionId);
+      }
     }
   });
 }
