@@ -9,16 +9,22 @@ import { findProjectRoot } from './paths';
 loadEnv();
 const projectRoot = findProjectRoot(__dirname);
 
-function sanitizeJobDescription(text: string): string {
+const EMOJI_REGEX = /(?:\p{Extended_Pictographic}(?:\p{Emoji_Modifier})?(?:\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier})?(?:\uFE0F|\uFE0E)?)*)/gu;
+
+export function sanitizeJobDescription(text: string): string {
   if (!text) return text;
   return text
     .normalize('NFKC')
-    .replace(/\u2026/g, '...')
+    .replace(EMOJI_REGEX, '')
+    .replace(/[\u2026]/g, '...')
     .replace(/[\u2013\u2014\u2212]/g, '-')
     .replace(/[\|]/g, ' ')
     .replace(/[`]/g, "'")
     .replace(/[\\]/g, ' ')
     .replace(/[\[\]{}]/g, (c) => ({ '[': '(', ']': ')', '{': '(', '}': ')' }[c]!))
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
