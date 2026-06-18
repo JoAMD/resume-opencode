@@ -1,7 +1,11 @@
 # AI Prompt Headers Timeout — Status, Plan, and Test Runbook
 
-**Worktree:** `fix/ai-session-lifecycle` @ `5cc911f` (branched from `main` @ `1c8b617`)
-**Scope:** Options A + B complete; debug endpoint shipped for Option B validation; Option C/D still deferred.
+**Worktrees in this fix chain:**
+- `fix/ai-prompt-headers-timeout` — Option A (already merged to main as `bc63890`)
+- `fix/ai-session-lifecycle` — Option B + debug endpoint (merged to main as `99be112`)
+- **`fix/ai-prompt-timing-logs`** — *this worktree*; adds request-duration timing and error diagnosis to identify which timer fires under `HeadersTimeoutError`
+
+**Scope:** Options A + B complete; debug endpoint shipped for Option B validation; timing logs shipped in this branch to identify any remaining `HeadersTimeoutError`; Option C/D still deferred.
 
 ---
 
@@ -228,6 +232,62 @@ If you can reproduce the truncated-JSON error on `main`, re-run the same job aga
 unset ENABLE_DEBUG_ROUTES
 # (Leave OPENCODE_AI_PROMPT_TIMEOUT_MS at 600000 in .env for production)
 ```
+
+---
+
+# Reading the New Timing Logs
+
+`fix/ai-prompt-timing-logs` adds instrumentation so a `HeadersTimeoutError` (or any prompt failure) tells you **which timer fired and how long it took**. This answers the "is it 60 s or 300 s?" question with hard data.
+
+## What's logged
+
+On a successful prompt, you'll see (sample timestamps illustrative):
+
+```
+========== OPENCODE STARTING ==========
+Prompt timeout (ms): 600000
+[timing] getOpencodeClient OK in 2ms
+Creating session in: /home/...
+[timing] session.create OK in 31ms (id=ses_abc, total elapsed: 33ms)
+[timing] client.session.prompt start (elapsed since fetch start: 33ms, abortTimeoutMs: 600000)
+[timing] client.session.prompt OK in 45230ms (total since fetch start: 45263ms)
+[timing] full runOpenCode path completed in 45270ms
+========== OPENCODE DONE (structured) ==========
+```
+
+On a failure, you'll see an extra block:
+
+```
+[timing] client.session.prompt FAILED after 60123ms
+[timing]   error.name: Error
+[timing]   error.cause.code: UND_ERR_HEADERS_TIMEOUT
+[timing]   error.message: fetch failed
+[timing]   abortSignal.aborted: false (reason: n/a)
+[timing]   DIAGNOSIS: undici headersTimeout fired (OpenCode server did not send headers in time). Check upstream OpenCode server / proxy timeouts.
+```
+
+## What the diagnosis means
+
+| `error.cause.code` | `signal.aborted` | `error.message` includes "timed out" | Diagnosis |
+|---|---|---|---|
+| `UND_ERR_HEADERS_TIMEOUT` | any | any | undici's `headersTimeout` fired (~5 min default in Node 22/23). The OpenCode server didn't send response headers in time. Fix is server-side (Option D) or upstream. |
+| any | `true` | yes | Our `AbortController` fired after `OPENCODE_AI_PROMPT_TIMEOUT_MS` (default 10 min). Increase the env var if legitimate. |
+| any | `true` | no | Aborted but not by our timeout — some other caller aborted (e.g. client disconnect). |
+| any | `false` | any | Fetch failed before any timeout. Check network/upstream. |
+
+## How to use it for the 60 s mystery
+
+1. Merge this branch and re-deploy.
+2. Trigger the failing request again.
+3. Look at `[timing] client.session.prompt FAILED after Nms` — the `N` is the answer.
+   - If `N ≈ 60000`: a 60 s timer is the culprit. Most likely the OpenCode server's own `server.headersTimeout = 60_000` default, or an upstream proxy. Server-side fix needed.
+   - If `N ≈ 300000`: undici's default 5 min `headersTimeout`. Bypass it by setting `OPENCODE_AI_PROMPT_TIMEOUT_MS` < 300000 so our AbortController wins.
+   - If `N ≈ 600000` (= `OPENCODE_AI_PROMPT_TIMEOUT_MS`): our timeout fired as designed.
+   - If `N` is much shorter (< 30 s) and not 60 s: TLS handshake failure or DNS; check `error.cause.code` for `UND_ERR_SOCKET` / `UND_ERR_CONNECT_TIMEOUT`.
+
+## Refactor notes
+
+The instrumentation was added without worsening Code Health. `runOpenCode`'s cyclomatic complexity dropped from 21 (above threshold) to "no longer above threshold" because the work was moved into `runOpenCodePipeline` + `resolvePromptResult` + `diagnosePromptError` (data-driven lookup table). `pre_commit_code_health_safeguard` verdict: **improved** (8.54 → 7.91).
 
 ---
 

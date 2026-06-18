@@ -623,16 +623,63 @@ async function maybeApplyDebugSleep(signal: AbortSignal): Promise<void> {
   }
 }
 
+const PROMPT_ERROR_DIAGNOSES: ReadonlyArray<{
+  matches: (err: any, isAbort: boolean, msg: string) => boolean;
+  message: string;
+}> = [
+  {
+    matches: (err) => err?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT',
+    message: 'undici headersTimeout fired (OpenCode server did not send headers in time). Check upstream OpenCode server / proxy timeouts.',
+  },
+  {
+    matches: (_err, isAbort, msg) => isAbort && msg.includes('timed out'),
+    message: 'our AbortController fired after the configured timeout. Increase OPENCODE_AI_PROMPT_TIMEOUT_MS.',
+  },
+  {
+    matches: (_err, isAbort) => isAbort,
+    message: 'AbortController aborted (signal.aborted=true) but not from timeout. Check caller.',
+  },
+  {
+    matches: () => true,
+    message: 'fetch failed before any timeout. Check network/upstream.',
+  },
+];
+
+function diagnosePromptError(err: any, signal: AbortSignal, timeoutMs: number): void {
+  const errName = err?.name || 'Error';
+  const errCode = err?.cause?.code;
+  const errMessage = err?.message || String(err);
+  const isAbort = signal.aborted;
+  console.log(`[timing]   error.name: ${errName}`);
+  console.log(`[timing]   error.cause.code: ${errCode}`);
+  console.log(`[timing]   error.message: ${errMessage}`);
+  console.log(`[timing]   abortSignal.aborted: ${isAbort} (reason: ${isAbort ? (signal.reason?.message || 'n/a') : 'n/a'})`);
+  const diagnosis = PROMPT_ERROR_DIAGNOSES.find((d) => d.matches(err, isAbort, errMessage))!;
+  const suffix = errMessage.includes('timed out') ? ` (timeout was ${timeoutMs}ms)` : '';
+  console.log(`[timing]   DIAGNOSIS: ${diagnosis.message}${suffix}`);
+}
+
 async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any, timeoutMs: number = AI_PROMPT_TIMEOUT_MS): Promise<any> {
+  const fetchStartMs = Date.now();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`OpenCode prompt timed out after ${timeoutMs}ms`)), timeoutMs);
   try {
     await maybeApplyDebugSleep(ac.signal);
-    const result = await client.session.prompt({
-      path: { id: sessionId },
-      body: promptBody,
-      signal: ac.signal,
-    } as any);
+    const promptStartMs = Date.now();
+    console.log(`[timing] client.session.prompt start (elapsed since fetch start: ${promptStartMs - fetchStartMs}ms, abortTimeoutMs: ${timeoutMs})`);
+    let result: any;
+    try {
+      result = await client.session.prompt({
+        path: { id: sessionId },
+        body: promptBody,
+        signal: ac.signal,
+      } as any);
+    } catch (promptErr: any) {
+      console.log(`[timing] client.session.prompt FAILED after ${Date.now() - fetchStartMs}ms`);
+      diagnosePromptError(promptErr, ac.signal, timeoutMs);
+      throw promptErr;
+    }
+    console.log(`[timing] client.session.prompt OK in ${Date.now() - promptStartMs}ms (total since fetch start: ${Date.now() - fetchStartMs}ms)`);
 
     if (result.error) {
       throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
@@ -676,56 +723,88 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
     console.log('Prompt timeout (ms):', AI_PROMPT_TIMEOUT_MS);
     console.log('=====================================\n');
 
-    let client: any = null;
-    let sessionId: string | null = null;
+    const runStartMs = Date.now();
     try {
-      client = await getOpencodeClient();
-      console.log('Creating session in:', projectRoot);
-
-      sessionId = await createOpencodeSession(client, modelToUse);
-      const promptBody = buildPromptBody(fullPrompt, jsonSchema, useStructuredOutput, model);
-
-      const result = await executeOpencodePrompt(client, sessionId, promptBody);
-
-      const structuredResult = parseStructuredResult(result, jsonSchema);
-      if (structuredResult) {
-        resolve(structuredResult);
-        return;
-      }
-
-      const textResult = parseTextResult(result, jsonSchema, outputFilePath);
-      if (textResult) {
-        if (outputFilePath) {
-          const fileResult = await pollOutputFile(outputFilePath);
-          if (fileResult) {
-            resolve(fileResult);
-            return;
-          }
-        } else {
-          resolve(textResult);
-          return;
-        }
-      }
-
-      const allParts = result.data?.info?.parts || result.data?.parts || [];
-      const resultText = allParts.find((p: any) => p.type === "text")?.text
-        || result.data?.content
-        || '';
-
-      resolve({
-        structured: resultText,
-        rawText: resultText,
-        usedStructuredOutput: false
+      const pipeline = await runOpenCodePipeline({
+        modelToUse, fullPrompt, jsonSchema, useStructuredOutput, model,
+        outputFilePath, runStartMs,
       });
+      resolve(pipeline);
     } catch (err) {
+      const totalElapsedMs = Date.now() - runStartMs;
+      console.log(`[timing] runOpenCode caught error after ${totalElapsedMs}ms total`);
       console.log('[AI ERROR]', err);
       reject(err);
-    } finally {
-      if (client && sessionId) {
-        await deleteOpencodeSession(client, sessionId);
-      }
     }
   });
+}
+
+interface PipelineContext {
+  modelToUse: string;
+  fullPrompt: string;
+  jsonSchema?: object;
+  useStructuredOutput: boolean;
+  model?: string;
+  outputFilePath: string | null;
+  runStartMs: number;
+}
+
+async function resolvePromptResult(
+  result: any,
+  jsonSchema: object | undefined,
+  outputFilePath: string | null
+): Promise<RunOpenCodeResult> {
+  const structuredResult = parseStructuredResult(result, jsonSchema);
+  if (structuredResult) {
+    return structuredResult;
+  }
+
+  const textResult = parseTextResult(result, jsonSchema, outputFilePath);
+  if (textResult) {
+    if (outputFilePath) {
+      const fileResult = await pollOutputFile(outputFilePath);
+      if (fileResult) {
+        return fileResult;
+      }
+    } else {
+      return textResult;
+    }
+  }
+
+  const allParts = result.data?.info?.parts || result.data?.parts || [];
+  const resultText = allParts.find((p: any) => p.type === "text")?.text
+    || result.data?.content
+    || '';
+
+  return {
+    structured: resultText,
+    rawText: resultText,
+    usedStructuredOutput: false
+  };
+}
+
+async function runOpenCodePipeline(ctx: PipelineContext): Promise<RunOpenCodeResult> {
+  let client: any = null;
+  let sessionId: string | null = null;
+  try {
+    client = await getOpencodeClient();
+    console.log(`[timing] getOpencodeClient OK in ${Date.now() - ctx.runStartMs}ms`);
+    console.log('Creating session in:', projectRoot);
+
+    const sessionStartMs = Date.now();
+    sessionId = await createOpencodeSession(client, ctx.modelToUse);
+    console.log(`[timing] session.create OK in ${Date.now() - sessionStartMs}ms (id=${sessionId}, total elapsed: ${Date.now() - ctx.runStartMs}ms)`);
+    const promptBody = buildPromptBody(ctx.fullPrompt, ctx.jsonSchema, ctx.useStructuredOutput, ctx.model);
+
+    const result = await executeOpencodePrompt(client, sessionId, promptBody);
+    console.log(`[timing] full runOpenCode path completed in ${Date.now() - ctx.runStartMs}ms`);
+
+    return await resolvePromptResult(result, ctx.jsonSchema, ctx.outputFilePath);
+  } finally {
+    if (client && sessionId) {
+      await deleteOpencodeSession(client, sessionId);
+    }
+  }
 }
 
 export type CoverLetterJSON = {
