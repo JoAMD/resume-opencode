@@ -66,9 +66,10 @@ Stop leaking sessions and connections; make "after a while" failures go away, no
 - New env knobs:
   - `OPENCODE_CLIENT_KEEPALIVE` (default `false`) — forwarded as `keepalive` on `RequestInit`. Disables per-socket reuse; each prompt opens a fresh socket that closes immediately after the response.
   - `OPENCODE_CLIENT_ROTATE_AFTER` (default `50`) — count-based client rotation. After N requests, the cached `opencodeClient` is set to `null` so the next call constructs a new client (releasing the undici agent + keep-alive pool).
+  - `OPENCODE_KEEP_SESSION` (default `true` — see Appendix v2 below for the rationale on reversing the original "always delete" choice) — when `false`, restores the original `finally { deleteOpencodeSession(...) }` behavior. When `true` (default), the session is left on the OpenCode server and the session id is returned to the caller for logging / UI / job-folder surfacing (see `OPENCODE_SESSION_KEEP_PLAN.md`).
 - `getOpencodeClient()` — rotated when count ≥ threshold; logs `Rotating OpenCode client after N requests to release keep-alive sockets`.
-- New `deleteOpencodeSession(client, sessionId)` — calls `client.session.delete({ path: { id: sessionId } })`, errors are logged non-fatally.
-- `runOpenCode` — captures `client` and `sessionId` in outer scope, adds a `finally` block that always calls `deleteOpencodeSession`. `sessionId` is `null` if `createOpencodeSession` itself threw, in which case delete is skipped.
+- New `deleteOpencodeSession(client, sessionId)` — calls `client.session.delete({ path: { id: sessionId } })`, errors are logged non-fatally. Only called when `OPENCODE_KEEP_SESSION=false`.
+- `runOpenCode` — captures `client` and `sessionId` in outer scope; when `OPENCODE_KEEP_SESSION=false`, the original `finally` block calls `deleteOpencodeSession`. `sessionId` is `null` if `createOpencodeSession` itself threw, in which case delete is skipped.
 - New `maybeApplyDebugSleep(signal)` — reads `OPENCODE_DEBUG_PROMPT_SLEEP_MS`; if > 0, awaits a `setTimeout` (cancellable via the AbortController's `signal`) before calling `client.session.prompt`. Used by the debug endpoint to simulate a slow upstream.
 
 **2. `routes/generate.ts` (+44 / 0)**
@@ -76,16 +77,18 @@ Stop leaking sessions and connections; make "after a while" failures go away, no
 - Default-off so it can't be hit in production by accident.
 
 **3. `services/ai.sessionLifecycle.test.ts` (new, +193)**
-- 4 tests (mocked SDK):
+- 4 tests (mocked SDK), all run with `OPENCODE_KEEP_SESSION=false` to lock in the opt-in path:
   1. `calls session.delete on the success path`
   2. `still calls session.delete when the prompt throws`
   3. `does not call session.delete if session creation itself failed`
   4. `rotates the client after OPENCODE_CLIENT_ROTATE_AFTER requests and reuses session.delete`
+- See `OPENCODE_SESSION_KEEP_PLAN.md` Step 5.1 for the parallel 4-test suite that covers the new default (`OPENCODE_KEEP_SESSION=true`, no delete).
 
 ### Verification
 - `npm run build` — clean (`tsc -p tsconfig.json`).
 - `npx vitest run` — **57/57 tests passing** across 7 files (50 prior + 4 new lifecycle + 3 already-existing on `ai.concurrency`/`generate` etc.).
 - No changes to `prompts/` or `templates/`. Code-only.
+- *Post v2:* additional tests added by `OPENCODE_SESSION_KEEP_PLAN.md` Step 5 (target: 60+ passing).
 
 ---
 
@@ -190,7 +193,9 @@ DEBUG: sleeping for 30000 ms before client.session.prompt (simulate slow upstrea
 - The error is clean, descriptive, and caught by the existing `try/catch`.
 - Crucially, **no `HeadersTimeoutError: UND_ERR_HEADERS_TIMEOUT`** — Option A is now the primary defense.
 
-## Step 4 — Verify `session.delete` is called in the finally block
+## Step 4 — Verify `session.delete` is called in the finally block *(opt-in path only)*
+
+> **This step is for the `OPENCODE_KEEP_SESSION=false` opt-in behavior only.** The default (since v2 below) is to keep the session on the OpenCode server so the id is inspectable. To reproduce this runbook, restart the server with `OPENCODE_KEEP_SESSION=false` in addition to the `ENABLE_DEBUG_ROUTES=true` / `OPENCODE_AI_PROMPT_TIMEOUT_MS=15000` flags from Step 2.
 
 Watch the server logs for the session lifecycle. After the request above completes (with either success or the 15-s timeout), the server should have called `client.session.delete({ path: { id: <sessionId> } })`. The `deleteOpencodeSession` function logs to `logError` only on error, so a clean exit is silent — that's correct.
 
@@ -301,3 +306,36 @@ The instrumentation was added without worsening Code Health. `runOpenCode`'s cyc
   - `services/ai.sessionLifecycle.test.ts` (new, +193)
 - SDK: `node_modules/@opencode-ai/sdk/dist/client.js:31-37` (fetch wrapper that explicitly disables `req.timeout`, confirming the SDK does **not** expose a `timeout` config — `AbortController` is the right tool)
 - Main repo plan: `../resume-opencode/AI_PROMPT_TIMEOUT_PLAN.md` (now superseded by this doc for the worktree).
+
+---
+
+# Appendix — Version Log (changes to this plan after the original draft)
+
+> This section is the durable record of decisions that **reversed or amended** earlier choices in this plan. Each entry notes what changed, why, and which sibling plan / branch owns the new behavior. Read top-to-bottom (oldest first) when trying to understand why a paragraph above no longer reflects the current code.
+
+## v2 — 2026-06-24 — Auto-delete in `finally` is now OFF by default
+
+**What changed in this plan:**
+- Option B no longer describes a "always delete" lifecycle. It now describes a **keep-by-default** lifecycle with `OPENCODE_KEEP_SESSION=false` as an explicit opt-in to the original `finally`-delete behavior.
+- The verification checklist and runbook above still apply to the `OPENCODE_KEEP_SESSION=false` path; new tests cover the default-true path.
+- This plan no longer claims "after a while" failures are *fixed* by Option B. That claim depended on server-side session accumulation being the leak vector; with sessions kept on the server, the leak hypothesis is weakened. The user hit a fresh 5-minute `HeadersTimeoutError` on 2026-06-23, which proves the leak fix did not eliminate the class of failure.
+
+**Why:**
+1. The session id the server logs (`ses_…`) was destroyed before any developer could find it on the OpenCode server, making the `Invalid response from OpenCode` failures undiagnosable from the log file alone.
+2. The user explicitly asked: "surface the session id to UI and `other-input.txt`" — that requires the session to outlive the prompt.
+3. The four existing `ai.sessionLifecycle.test.ts` tests now have a parallel suite under the new default; the originals are preserved as the `OPENCODE_KEEP_SESSION=false` opt-in tests.
+
+**Where the new behavior is owned:**
+- Plan: `docs/plans/OPENCODE_SESSION_KEEP_PLAN.md` (sibling, in the same folder as this file)
+- Branch: `fix/opencode-session-keep` (not yet created at the time of this entry)
+- Files to be edited:
+  - `services/ai.ts` — drop unconditional `finally { deleteOpencodeSession(...) }`; add `OPENCODE_KEEP_SESSION` env knob (default `true`); return `sessionId` from `RunOpenCodeResult`; enrich the `Invalid response from OpenCode` error with the session id and raw model output; route session-create logs through `logger.ts` instead of `console.log` so the id lands in `logs/server-*.log`.
+  - `routes/generate.ts` — write `session-info.txt` to the job folder; append the resolved session id to `other-input.txt`; add `sessionId` to the `taskMap` record and the `GET /generate/task/:taskId` response; include `sessionId` in the task's `result` object so the UI can read it from `waitForTask` without a second fetch.
+  - `public/index.html` — render the session id in the result area with a click-to-copy button.
+  - `services/ai.sessionLifecycle.test.ts` — update the 4 existing tests for the new default + add 4 new opt-in tests.
+  - `services/ai.sessionInfo.test.ts` (new) — assert `generateResumeJSON` / `generateCoverLetterJSON` / `generateCombinedJSON` return the session id.
+  - `routes/generate.test.ts` — assert `GET /generate/task/:id` includes `sessionId` and the job folder contains `session-info.txt`.
+
+**Cross-references:**
+- See "What this proves" under Step 3 of the runbook — that section remains valid for the `OPENCODE_KEEP_SESSION=false` opt-in case.
+- The "headersTimeout" investigation (Options A/C/D above) is **unaffected** by this change and remains the open question for the 5-minute failure on 2026-06-23. The new `Invalid response from OpenCode (sessionId=…, rawModelOutput=…)` error format (Step 1.3 of `OPENCODE_SESSION_KEEP_PLAN.md`) is the diagnostic vehicle for that next investigation.
