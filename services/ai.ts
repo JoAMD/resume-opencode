@@ -76,6 +76,7 @@ const AI_CONCURRENCY = Math.max(1, parseInt(process.env.OPENCODE_AI_CONCURRENCY 
 const AI_CONCURRENCY_POLL_MS = 5;
 const AI_QUEUE_ENABLED = (process.env.OPENCODE_AI_QUEUE ?? 'true').toLowerCase() !== 'false';
 const AI_PROMPT_TIMEOUT_MS = Math.max(1000, parseInt(process.env.OPENCODE_AI_PROMPT_TIMEOUT_MS || '600000', 10) || 600000);
+const OPENCODE_KEEP_SESSION = (process.env.OPENCODE_KEEP_SESSION ?? 'true').toLowerCase() !== 'false';
 
 const aiQueues: Map<string, Promise<unknown>> = new Map();
 const aiInFlight: Map<string, number> = new Map();
@@ -392,6 +393,8 @@ interface RunOpenCodeResult {
   structured: any;
   rawText: string;
   usedStructuredOutput: boolean;
+  sessionId?: string;
+  rawModelOutput?: string;
 }
 
 async function waitForOutputFile(filepath: string, timeoutMs = 120000, intervalMs = 2000): Promise<string | null> {
@@ -458,8 +461,9 @@ async function createOpencodeSession(client: any, model: string): Promise<string
     throw new Error(`Session creation error: ${JSON.stringify(session.error)}`);
   }
 
-  console.log('Session created:', JSON.stringify(session).slice(0, 500));
-  return session.data?.id || session.id;
+  const sessionId = session.data?.id || session.id;
+  log('OpenCode session created:', sessionId, '(model:', model + ', keepSession:', OPENCODE_KEEP_SESSION + ')');
+  return sessionId;
 }
 
 async function deleteOpencodeSession(client: any, sessionId: string): Promise<void> {
@@ -794,20 +798,26 @@ async function runOpenCodePipeline(ctx: PipelineContext): Promise<RunOpenCodeRes
   let sessionId: string | null = null;
   try {
     client = await getOpencodeClient();
-    console.log(`[timing] getOpencodeClient OK in ${Date.now() - ctx.runStartMs}ms`);
-    console.log('Creating session in:', projectRoot);
+    log(`[timing] getOpencodeClient OK in ${Date.now() - ctx.runStartMs}ms`);
+    log('Creating session in:', projectRoot);
 
     const sessionStartMs = Date.now();
     sessionId = await createOpencodeSession(client, ctx.modelToUse);
-    console.log(`[timing] session.create OK in ${Date.now() - sessionStartMs}ms (id=${sessionId}, total elapsed: ${Date.now() - ctx.runStartMs}ms)`);
+    log(`[timing] session.create OK in ${Date.now() - sessionStartMs}ms (id=${sessionId}, total elapsed: ${Date.now() - ctx.runStartMs}ms)`);
     const promptBody = buildPromptBody(ctx.fullPrompt, ctx.jsonSchema, ctx.useStructuredOutput, ctx.model);
 
     const result = await executeOpencodePrompt(client, sessionId, promptBody);
-    console.log(`[timing] full runOpenCode path completed in ${Date.now() - ctx.runStartMs}ms`);
+    log(`[timing] full runOpenCode path completed in ${Date.now() - ctx.runStartMs}ms`);
 
-    return await resolvePromptResult(result, ctx.jsonSchema, ctx.outputFilePath);
+    const rawModelOutput = JSON.stringify(result.data?.info?.parts ?? result.data?.parts ?? []).slice(0, 2000);
+    const resolved = await resolvePromptResult(result, ctx.jsonSchema, ctx.outputFilePath);
+    return {
+      ...resolved,
+      sessionId: sessionId!,
+      rawModelOutput,
+    };
   } finally {
-    if (client && sessionId) {
+    if (!OPENCODE_KEEP_SESSION && client && sessionId) {
       await deleteOpencodeSession(client, sessionId);
     }
   }
@@ -911,14 +921,40 @@ export function applyCoverLetterOverrides(json: Partial<CoverLetterJSON> & { bod
   return updated as CoverLetterJSON;
 }
 
+function buildInvalidResponseError(sessionId: string, rawModelOutput: string, detail?: string): Error {
+  const parts = [
+    'Invalid response from OpenCode',
+    `sessionId=${sessionId}`,
+    `rawModelOutput=${rawModelOutput}`,
+  ];
+  if (detail) parts.push(`detail=${detail}`);
+  return new Error(parts.join(' | '));
+}
+
+export interface GenerateResumeResult {
+  resume: ResumeData;
+  sessionId: string;
+}
+export interface GenerateCoverLetterResult {
+  coverLetter: CoverLetterJSON;
+  sessionId: string;
+}
+export interface GenerateCombinedResult {
+  resume: ResumeData;
+  coverLetter: CoverLetterJSON;
+  atsKeywords: string[];
+  sessionId: string;
+  coverLetterSessionId: string;
+}
+
 export async function generateResumeJSON(
   jobDescription: string,
   extraNotes: string,
   context?: { companyName?: string; roleName?: string; generateWithoutJD?: boolean; promptLogDir?: string },
   options?: { lowTokenMode?: boolean; modelSelect?: string; resumeType?: 'software' | 'qa' }
-): Promise<ResumeData> {
+): Promise<GenerateResumeResult> {
   log('generateResumeJSON (opencode) called, lowTokenMode:', options?.lowTokenMode, 'model:', options?.modelSelect, 'resumeType:', options?.resumeType);
-  
+
   try {
     const sanitizedJD = sanitizeJobDescription(jobDescription);
     const model = options?.modelSelect || OPENCODE_MODEL;
@@ -926,10 +962,10 @@ export async function generateResumeJSON(
     const companyLine = context?.companyName?.trim() || '[not provided]';
     const roleLine = context?.roleName?.trim() || '[not provided]';
     const generateWithoutJD = Boolean(context?.generateWithoutJD);
-    
+
     let userContent: string;
     let systemPrompt: string;
-    
+
     if (generateWithoutJD) {
       systemPrompt = SYSTEM_PROMPT_ROLE_ONLY;
       userContent = `BASE RESUME:\n${baseResume}\n\nTARGET ROLE:\n${roleLine}\n\nEXTRA NOTES:\n${extraNotes}`;
@@ -937,9 +973,12 @@ export async function generateResumeJSON(
       systemPrompt = SYSTEM_PROMPT;
       userContent = `BASE RESUME:\n${baseResume}\n\nJOB DESCRIPTION:\n${sanitizedJD}\n\nEXTRA NOTES:\n${extraNotes}`;
     }
-    
+
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
-    return applyProfileOverrides(result.structured);
+    return {
+      resume: applyProfileOverrides(result.structured),
+      sessionId: result.sessionId,
+    };
   } catch (err) {
     logError('OpenCode generation error:', err);
     throw err;
@@ -953,13 +992,13 @@ export async function generateCoverLetterJSON(
   companyName: string,
   roleName: string,
   options?: { modelSelect?: string; promptLogDir?: string; useStarMethodForGovtRoles?: boolean }
-): Promise<CoverLetterJSON> {
+): Promise<GenerateCoverLetterResult> {
   log('generateCoverLetterJSON (opencode) called, model:', options?.modelSelect, 'starMethod:', options?.useStarMethodForGovtRoles);
-  
+
   try {
     const model = options?.modelSelect || OPENCODE_MODEL;
     const sanitizedJD = sanitizeJobDescription(jobDescription);
-    
+
     const COVER_LETTER_SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'cover-letter-system-prompt.txt'), 'utf8');
     const useStar = options?.useStarMethodForGovtRoles ?? false;
     const coverPrompt = useStar ? COVER_LETTER_SYSTEM_PROMPT_STAR : COVER_LETTER_SYSTEM_PROMPT;
@@ -968,7 +1007,10 @@ export async function generateCoverLetterJSON(
     const userContent = `COMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\nJOB DESCRIPTION:\n${sanitizedJD}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}\n\nRESUME:\n${JSON.stringify(privacySafeResume, null, 2)}`;
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt: coverPrompt, userContent, model, promptLogDir: options?.promptLogDir, jsonSchema: COVER_LETTER_JSON_SCHEMA }));
-    return applyCoverLetterOverrides(result.structured);
+    return {
+      coverLetter: applyCoverLetterOverrides(result.structured),
+      sessionId: result.sessionId,
+    };
   } catch (err) {
     logError('OpenCode cover letter error:', err);
     throw err;
@@ -988,9 +1030,9 @@ export async function generateCombinedJSON(
   roleName: string,
   generateWithoutJD?: boolean,
   options?: { lowTokenMode?: boolean; modelSelect?: string; promptLogDir?: string; useStarMethodForGovtRoles?: boolean; resumeType?: 'software' | 'qa' }
-): Promise<CombinedGenerationJSON> {
+): Promise<GenerateCombinedResult> {
   log('generateCombinedJSON (opencode) called, model:', options?.modelSelect, 'lowTokenMode:', options?.lowTokenMode, 'starMethod:', options?.useStarMethodForGovtRoles, 'resumeType:', options?.resumeType);
-  
+
   try {
     const model = options?.modelSelect || OPENCODE_MODEL;
     const sanitizedJD = sanitizeJobDescription(jobDescription);
@@ -998,19 +1040,23 @@ export async function generateCombinedJSON(
     const targetContext = generateWithoutJD
       ? `TARGET ROLE:\n${roleName || 'General technical role'}`
       : `JOB DESCRIPTION:\n${sanitizedJD}`;
-    
+
     const colleagueFeedback = loadColleagueFeedback();
     const userContent = `BASE RESUME:\n${baseResume}\n\nCOMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\n${targetContext}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}`;
-    
+
     const useStar = options?.useStarMethodForGovtRoles ?? false;
     const systemPrompt = useStar
       ? `${COMBINED_SYSTEM_PROMPT}\n\nFor the coverLetter output, also apply this mode:\n${GOVT_STAR_METHOD_PROMPT_APPENDIX}`
       : COMBINED_SYSTEM_PROMPT;
-    
+
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: options?.promptLogDir, jsonSchema: COMBINED_JSON_SCHEMA }));
 
     if (!result.structured?.resume?.name || typeof result.structured.resume.name !== 'string') {
-      throw new Error('Invalid response from OpenCode');
+      throw buildInvalidResponseError(
+        result.sessionId,
+        result.rawModelOutput ?? '',
+        'resume.name missing or non-string in structured response'
+      );
     }
 
     assertValidCoverLetter(result.structured.coverLetter);
@@ -1022,6 +1068,8 @@ export async function generateCombinedJSON(
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
       resume,
       coverLetter,
+      sessionId: result.sessionId,
+      coverLetterSessionId: result.sessionId,
     };
   } catch (err) {
     logError('OpenCode combined generation error:', err);

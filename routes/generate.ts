@@ -12,6 +12,8 @@ import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
 
 const router = Router();
+
+export { router };
 const projectRoot = findProjectRoot(__dirname);
 const jobsDir = path.join(projectRoot, 'jobs');
 
@@ -45,6 +47,8 @@ type TaskResult = {
   status: TaskStatus;
   result?: any;
   error?: string;
+  sessionId?: string;
+  coverLetterSessionId?: string;
 };
 
 const taskMap = new Map<string, TaskResult & { startedAt: number }>();
@@ -90,6 +94,22 @@ function saveJobFile(dirPath: string, filename: string, content: string | Buffer
   } else {
     fs.writeFileSync(filePath, content, 'utf8');
   }
+}
+
+export function appendJobFile(dirPath: string, filename: string, content: string): void {
+  fs.appendFileSync(path.join(dirPath, filename), content, 'utf8');
+}
+
+export function writeSessionInfo(dirPath: string, info: { sessionId: string; model?: string; coverLetterSessionId?: string }): void {
+  const lines = [
+    `OpenCode Session ID: ${info.sessionId}`,
+    `Model: ${info.model || ''}`,
+    `Generated At: ${new Date().toISOString()}`,
+  ];
+  if (info.coverLetterSessionId && info.coverLetterSessionId !== info.sessionId) {
+    lines.push(`Cover Letter Session ID: ${info.coverLetterSessionId}`);
+  }
+  saveJobFile(dirPath, 'session-info.txt', lines.join('\n') + '\n');
 }
 
 const RESUME_TYPE_LABELS: Record<string, string> = {
@@ -200,6 +220,8 @@ router.get('/task/:taskId', (req, res) => {
     result: task.result,
     error: task.error,
     startedAt: task.startedAt,
+    sessionId: task.sessionId,
+    coverLetterSessionId: task.coverLetterSessionId,
   });
 });
 
@@ -228,8 +250,8 @@ router.post('/', async (req, res) => {
 
     (async () => {
       try {
-        const result = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
-        taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now() });
+        const { result, sessionId, coverLetterSessionId } = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
+        taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now(), sessionId, coverLetterSessionId });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
         logError('Background generation error:', err);
@@ -264,7 +286,7 @@ router.post('/coverLetter', async (req, res) => {
   }
 
   try {
-    const coverLetterJSON = await generateCoverLetterJSON(
+    const { coverLetter: coverLetterJSON, sessionId } = await generateCoverLetterJSON(
       resumeJSON,
       jobDescription ?? '',
       extraNotes ?? '',
@@ -276,6 +298,7 @@ router.post('/coverLetter', async (req, res) => {
 
     const jobDir = resolveCoverLetterJobDir(companyName, roleName);
     saveJobFile(jobDir, 'cover-letter.json', JSON.stringify(coverLetterJSON, null, 2));
+    writeSessionInfo(jobDir, { sessionId, model: modelSelect });
 
     const latexSource = buildCoverLetterLatex(coverLetterJSON);
     saveJobFile(jobDir, 'cover-letter.tex', latexSource);
@@ -284,11 +307,11 @@ router.post('/coverLetter', async (req, res) => {
     if (effectiveCoverOutput === 'txt') {
       const txtContent = formatCoverLetterText(coverLetterJSON);
       saveJobFile(jobDir, 'cover-letter.txt', txtContent);
-      res.json({ txtUrl: `/jobs/${path.basename(jobDir)}/cover-letter.txt` });
+      res.json({ txtUrl: `/jobs/${path.basename(jobDir)}/cover-letter.txt`, sessionId });
     } else {
       const pdfBuffer = await compilePDF(latexSource);
       saveJobFile(jobDir, 'cover-letter.pdf', pdfBuffer);
-      res.json({ pdfUrl: `/jobs/${path.basename(jobDir)}/cover-letter.pdf` });
+      res.json({ pdfUrl: `/jobs/${path.basename(jobDir)}/cover-letter.pdf`, sessionId });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -478,13 +501,15 @@ async function executeGeneration(
   jobDir: { jobDir: string; slug: string },
   options: ReturnType<typeof buildGenerationOptions>,
   input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string; coverOutput?: 'pdf' | 'txt' | 'none' | ''; useCombinedGeneration?: boolean }
-): Promise<Record<string, unknown>> {
+): Promise<{ result: Record<string, unknown>; sessionId: string; coverLetterSessionId?: string }> {
   const { jobDescription, companyName, roleName, extraNotes, useCombinedGeneration } = input;
   const coverOutput = resolveCoverOutput(input.coverOutput);
 
   let resumeJSON: ResumeData;
   let coverLetterJSON: CoverLetterJSON | undefined;
   let atsKeywords: string[] = [];
+  let sessionId: string;
+  let coverLetterSessionId: string | undefined;
 
   const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
 
@@ -493,8 +518,12 @@ async function executeGeneration(
     resumeJSON = combined.resume;
     coverLetterJSON = combined.coverLetter;
     atsKeywords = combined.atsKeywords ?? [];
+    sessionId = combined.sessionId;
+    coverLetterSessionId = combined.coverLetterSessionId;
   } else {
-    resumeJSON = await generateResumeJSON(jobDescription ?? '', extraNotes ?? '', context, options);
+    const resumeResult = await generateResumeJSON(jobDescription ?? '', extraNotes ?? '', context, options);
+    resumeJSON = resumeResult.resume;
+    sessionId = resumeResult.sessionId;
   }
 
   lastGeneratedResumeJSON = resumeJSON;
@@ -509,10 +538,15 @@ async function executeGeneration(
 
   saveJobFile(jobDir.jobDir, 'structured-output.json', JSON.stringify(resumeJSON, null, 2));
 
+  writeSessionInfo(jobDir.jobDir, { sessionId, model: options.modelSelect, coverLetterSessionId });
+  appendJobFile(jobDir.jobDir, 'other-input.txt', `\nOpenCode Session ID: ${sessionId}\n`);
+
   const result: Record<string, unknown> = {
     pdfUrl: `/jobs/${jobDir.slug}/resume.pdf`,
     jobDir: jobDir.slug,
+    sessionId,
   };
+  if (coverLetterSessionId) result.coverLetterSessionId = coverLetterSessionId;
 
   if (coverLetterJSON) {
     lastGeneratedCoverLetterJSON = coverLetterJSON;
@@ -540,7 +574,7 @@ async function executeGeneration(
     log(`ATS analysis: ${atsResult.coveragePercent}% coverage, ${atsKeywords.length} keywords`);
   }
 
-  return result;
+  return { result, sessionId, coverLetterSessionId };
 }
 
 function resolveCoverLetterJobDir(companyName: string, roleName: string): string {
@@ -804,7 +838,7 @@ if ((process.env.ENABLE_DEBUG_ROUTES ?? '').toLowerCase() === 'true') {
           { modelSelect: req.body?.modelSelect ?? 'opencode/gpt-5-nano' }
         )
       );
-      res.json({ ok: true, elapsedMs: Date.now() - start, name: result.name });
+      res.json({ ok: true, elapsedMs: Date.now() - start, name: result.resume.name, sessionId: result.sessionId });
     } catch (err: any) {
       logError('debug: /debug/slow-prompt error:', err);
       res.status(500).json({ ok: false, elapsedMs: Date.now() - start, ...describeError(err) });

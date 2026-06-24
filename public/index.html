@@ -133,6 +133,10 @@
       <p>✅ Resume generated!</p>
       <a id="pdf-link" href="#" target="_blank">Open PDF</a>
       <span id="job-folder" class="folder-path"></span>
+      <span id="session-id" class="session-id hidden">
+        OpenCode session: <code id="session-id-value"></code>
+        <button type="button" id="session-id-copy" class="button-tiny">Copy</button>
+      </span>
     </div>
   </div>
 
@@ -145,6 +149,21 @@
     }
     resumeTypeSelect.addEventListener('change', () => {
       sessionStorage.setItem('resumeType', resumeTypeSelect.value);
+    });
+
+    // Copy OpenCode session id to clipboard
+    document.getElementById('session-id-copy').addEventListener('click', async () => {
+      const value = document.getElementById('session-id-value').textContent || '';
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        const btn = document.getElementById('session-id-copy');
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = original; }, 1200);
+      } catch (e) {
+        console.error('clipboard write failed', e);
+      }
     });
 
     // Audio context for notification sound
@@ -329,6 +348,11 @@
           folderText += ` | Cover: ${result.coverPdfUrl}`;
         }
         document.getElementById('job-folder').textContent = folderText;
+        if (result.sessionId) {
+          const sidEl = document.getElementById('session-id');
+          document.getElementById('session-id-value').textContent = result.sessionId;
+          sidEl.classList.remove('hidden');
+        }
         result.className = 'result';
         status.className = 'status hidden';
         playSuccessSound();

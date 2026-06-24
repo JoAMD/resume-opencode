@@ -5,6 +5,7 @@ const spawnSync = vi.fn();
 const existsSync = vi.fn();
 const mkdirSync = vi.fn();
 const writeFileSync = vi.fn();
+const appendFileSync = vi.fn();
 const readdirSync = vi.fn();
 const statSync = vi.fn();
 const readFileSync = vi.fn();
@@ -27,6 +28,7 @@ vi.mock('fs', () => ({
     existsSync: (...args: unknown[]) => existsSync(...args),
     mkdirSync: (...args: unknown[]) => mkdirSync(...args),
     writeFileSync: (...args: unknown[]) => writeFileSync(...args),
+    appendFileSync: (...args: unknown[]) => appendFileSync(...args),
     readFileSync: (...args: unknown[]) => readFileSync(...args),
     readdirSync: (...args: unknown[]) => readdirSync(...args),
     statSync: (...args: unknown[]) => statSync(...args),
@@ -36,6 +38,7 @@ vi.mock('fs', () => ({
   existsSync: (...args: unknown[]) => existsSync(...args),
   mkdirSync: (...args: unknown[]) => mkdirSync(...args),
   writeFileSync: (...args: unknown[]) => writeFileSync(...args),
+  appendFileSync: (...args: unknown[]) => appendFileSync(...args),
   readFileSync: (...args: unknown[]) => readFileSync(...args),
   readdirSync: (...args: unknown[]) => readdirSync(...args),
   statSync: (...args: unknown[]) => statSync(...args),
@@ -56,6 +59,15 @@ vi.mock('../services/env', () => ({
   parseDotEnvContent: () => ({}),
   buildProfileFromEnvVars: () => ({}),
   normalizeEnvProfile: () => ({}),
+}));
+
+vi.mock('../services/ai', () => ({
+  generateResumeJSON: vi.fn(),
+  generateCoverLetterJSON: vi.fn(),
+  generateCombinedJSON: vi.fn(),
+  normaliseBodyParagraph: (v: any) => (Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/\n\s*\n+/) : [])),
+  analyzeATSKeywordsAgainstResume: () => ({ coveragePercent: 0, includedInResume: [], missingFromResume: [], extractedFromJD: [] }),
+  extractATSKeywordsFromJDViaAI: async () => [],
 }));
 
 const TECTONIC_URL = 'http://localhost:4000/compile';
@@ -186,5 +198,63 @@ describe('buildLatexFromStructured', () => {
 
     const writtenNames = (writeFileSync as Mock).mock.calls.map((c) => path.basename(c[0] as string));
     expect(writtenNames).toEqual(expect.arrayContaining(['cover-letter.tex', 'cover-letter.pdf', 'cover-letter.txt']));
+  });
+});
+
+describe('writeSessionInfo and appendJobFile helpers', () => {
+  beforeEach(() => {
+    existsSync.mockReset();
+    mkdirSync.mockReset();
+    writeFileSync.mockReset();
+    appendFileSync.mockReset();
+    readFileSync.mockReset();
+    readdirSync.mockReset();
+    statSync.mockReset();
+    spawnSync.mockReset();
+    writeFileSync.mockImplementation(() => undefined);
+    appendFileSync.mockImplementation(() => undefined);
+  });
+
+  it('writeSessionInfo writes session-id, model, and timestamp; appendJobFile appends to other-input.txt', async () => {
+    const { writeSessionInfo, appendJobFile } = await import('./generate.js');
+    writeSessionInfo('/tmp/opencode/fake-project-root/jobs/test-folder', { sessionId: 'ses_abc', model: 'opencode/gpt-5-nano' });
+    appendJobFile('/tmp/opencode/fake-project-root/jobs/test-folder', 'other-input.txt', '\nOpenCode Session ID: ses_abc\n');
+
+    const sessionWrite = (writeFileSync as Mock).mock.calls.find((c) => (c[0] as string).endsWith('session-info.txt'));
+    expect(sessionWrite).toBeDefined();
+    expect(sessionWrite![0]).toBe('/tmp/opencode/fake-project-root/jobs/test-folder/session-info.txt');
+    const sessionContent = sessionWrite![1] as string;
+    expect(sessionContent).toContain('OpenCode Session ID: ses_abc');
+    expect(sessionContent).toContain('Model: opencode/gpt-5-nano');
+    expect(sessionContent).toMatch(/Generated At: \d{4}-\d{2}-\d{2}T/);
+
+    const otherInputAppend = (appendFileSync as Mock).mock.calls.find((c) => (c[0] as string).endsWith('other-input.txt'));
+    expect(otherInputAppend).toBeDefined();
+    expect(otherInputAppend![0]).toBe('/tmp/opencode/fake-project-root/jobs/test-folder/other-input.txt');
+    expect(otherInputAppend![1] as string).toContain('OpenCode Session ID: ses_abc');
+  });
+
+  it('writeSessionInfo includes Cover Letter Session ID only when it differs from the main session id', async () => {
+    const { writeSessionInfo } = await import('./generate.js');
+    writeSessionInfo('/tmp/opencode/fake-project-root/jobs/test-folder-2', {
+      sessionId: 'ses_1',
+      coverLetterSessionId: 'ses_2',
+    });
+    const sessionWrite = (writeFileSync as Mock).mock.calls.find((c) => (c[0] as string).endsWith('session-info.txt'));
+    expect(sessionWrite).toBeDefined();
+    const content = sessionWrite![1] as string;
+    expect(content).toContain('OpenCode Session ID: ses_1');
+    expect(content).toContain('Cover Letter Session ID: ses_2');
+
+    writeFileSync.mockClear();
+    writeSessionInfo('/tmp/opencode/fake-project-root/jobs/test-folder-3', {
+      sessionId: 'ses_1',
+      coverLetterSessionId: 'ses_1',
+    });
+    const sessionWrite2 = (writeFileSync as Mock).mock.calls.find((c) => (c[0] as string).endsWith('session-info.txt'));
+    expect(sessionWrite2).toBeDefined();
+    const content2 = sessionWrite2![1] as string;
+    expect(content2).toContain('OpenCode Session ID: ses_1');
+    expect(content2).not.toContain('Cover Letter Session ID:');
   });
 });
