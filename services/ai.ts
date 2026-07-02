@@ -78,6 +78,18 @@ const AI_QUEUE_ENABLED = (process.env.OPENCODE_AI_QUEUE ?? 'true').toLowerCase()
 const AI_PROMPT_TIMEOUT_MS = Math.max(1000, parseInt(process.env.OPENCODE_AI_PROMPT_TIMEOUT_MS || '600000', 10) || 600000);
 const OPENCODE_KEEP_SESSION = (process.env.OPENCODE_KEEP_SESSION ?? 'true').toLowerCase() !== 'false';
 
+export const RESUME_CHAR_LIMIT = 7784;
+
+export function getResumeCharCount(resume: ResumeData | undefined | null): number {
+  if (!resume) return 0;
+  return JSON.stringify(resume).length;
+}
+
+export function applyResumeCharLimitFlag(resume: ResumeData): ResumeData {
+  const count = getResumeCharCount(resume);
+  return { ...resume, characterCountTrimmed: count > RESUME_CHAR_LIMIT ? 'true' : 'false' };
+}
+
 const aiQueues: Map<string, Promise<unknown>> = new Map();
 const aiInFlight: Map<string, number> = new Map();
 
@@ -157,7 +169,6 @@ const RESUME_JSON_SCHEMA = {
   type: "object",
   properties: {
     atsKeywords: { type: "array", items: { type: "string" }, description: "All ATS keywords extracted from the JD (lowercase)" },
-    characterCountTrimmed: "string",
     name: { type: "string", description: "Candidate full name" },
     phone: { type: "string", description: "Phone number" },
     email: { type: "string", description: "Email address" },
@@ -248,7 +259,6 @@ const COMBINED_JSON_SCHEMA = {
     resume: {
       type: "object",
       properties: {
-        characterCountTrimmed: "string",
         name: { type: "string", description: "Candidate full name" },
         phone: { type: "string", description: "Phone number" },
         email: { type: "string", description: "Email address" },
@@ -975,8 +985,10 @@ export async function generateResumeJSON(
     }
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
+    const resume = applyResumeCharLimitFlag(applyProfileOverrides(result.structured));
+    log('generateResumeJSON resume char count:', getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
     return {
-      resume: applyProfileOverrides(result.structured),
+      resume,
       sessionId: result.sessionId,
     };
   } catch (err) {
@@ -1062,8 +1074,9 @@ export async function generateCombinedJSON(
     assertValidCoverLetter(result.structured.coverLetter);
     const coverLetterRaw = result.structured.coverLetter;
 
-    const resume = applyProfileOverrides(result.structured.resume);
+    const resume = applyResumeCharLimitFlag(applyProfileOverrides(result.structured.resume));
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
+    log('generateCombinedJSON resume char count:', getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
       resume,

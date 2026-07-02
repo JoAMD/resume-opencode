@@ -40,4 +40,5 @@ export type ResumeData = {
   education: ResumeEducation[];
   projects: ResumeProject[];
   atsKeywords?: string[];
+  characterCountTrimmed?: string;
 };
