@@ -183,7 +183,7 @@ export async function enforceResumeCharLimit(
     let result: RunOpenCodeResult;
     try {
       result = await enqueueAIRequest(model, () => runOpenCode({
-        systemPrompt: TRIM_RESUME_PROMPT,
+        systemPrompt: TRIM_RESUME_PROMPT(),
         userContent,
         model,
         promptLogDir,
@@ -464,20 +464,31 @@ const COMBINED_JSON_SCHEMA = {
   required: ["resume", "coverLetter"]
 };
 
-const PROMPTS_DIR = path.join(projectRoot, 'prompts');
-const TEMPLATES_DIR = path.join(projectRoot, 'templates');
+const PROMPTS_DIR = process.env.OPENCODE_PROMPTS_DIR || path.join(projectRoot, 'prompts');
+const TEMPLATES_DIR = process.env.OPENCODE_TEMPLATES_DIR || path.join(projectRoot, 'templates');
 
-const SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'resume-system-prompt.txt'), 'utf8');
-const SYSTEM_PROMPT_ROLE_ONLY = fs.readFileSync(path.join(PROMPTS_DIR, 'resume-role-only-system-prompt.txt'), 'utf8');
-const COMBINED_SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'combined-system-prompt.txt'), 'utf8');
-const COVER_LETTER_SYSTEM_PROMPT_STAR = fs.readFileSync(path.join(PROMPTS_DIR, 'cover-letter-star-system-prompt.txt'), 'utf8');
-const ATS_KEYWORD_EXTRACTION_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'ats-keyword-extraction-prompt.txt'), 'utf8');
-const GOVT_STAR_METHOD_PROMPT_APPENDIX = fs.readFileSync(path.join(PROMPTS_DIR, 'govt-star-method-prompt.txt'), 'utf8');
-const TRIM_RESUME_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'trim-resume-prompt.txt'), 'utf8');
+function readLazyFile(filePath: string): () => string {
+  let cached: string | undefined;
+  return () => {
+    if (cached === undefined) {
+      cached = fs.readFileSync(filePath, 'utf8');
+    }
+    return cached;
+  };
+}
 
-const BASE_RESUME_TEMPLATE = fs.readFileSync(path.join(TEMPLATES_DIR, 'base-resume.txt.template'), 'utf8');
-const BASE_RESUME_TEMPLATE_MINIMAL = fs.readFileSync(path.join(TEMPLATES_DIR, 'base-resume-minimal.txt.template'), 'utf8');
-const BASE_RESUME_TEMPLATE_QA = fs.readFileSync(path.join(TEMPLATES_DIR, 'base-resume-qa.txt.template'), 'utf8');
+const SYSTEM_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'resume-system-prompt.txt'));
+const SYSTEM_PROMPT_ROLE_ONLY = readLazyFile(path.join(PROMPTS_DIR, 'resume-role-only-system-prompt.txt'));
+const COMBINED_SYSTEM_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'combined-system-prompt.txt'));
+const COVER_LETTER_SYSTEM_PROMPT_STAR = readLazyFile(path.join(PROMPTS_DIR, 'cover-letter-star-system-prompt.txt'));
+const COVER_LETTER_SYSTEM_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'cover-letter-system-prompt.txt'));
+const ATS_KEYWORD_EXTRACTION_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'ats-keyword-extraction-prompt.txt'));
+const GOVT_STAR_METHOD_PROMPT_APPENDIX = readLazyFile(path.join(PROMPTS_DIR, 'govt-star-method-prompt.txt'));
+const TRIM_RESUME_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'trim-resume-prompt.txt'));
+
+const BASE_RESUME_TEMPLATE = readLazyFile(path.join(TEMPLATES_DIR, 'base-resume.txt.template'));
+const BASE_RESUME_TEMPLATE_MINIMAL = readLazyFile(path.join(TEMPLATES_DIR, 'base-resume-minimal.txt.template'));
+const BASE_RESUME_TEMPLATE_QA = readLazyFile(path.join(TEMPLATES_DIR, 'base-resume-qa.txt.template'));
 const COLLEAGUE_FEEDBACK_FILE = path.join(TEMPLATES_DIR, 'colleague-feedback.txt');
 
 function formatEducationLine(entry: { institution: string; location: string; degree: string; dates: string }): string {
@@ -485,9 +496,9 @@ function formatEducationLine(entry: { institution: string; location: string; deg
 }
 
 function buildBaseResume(useMinimal = false, resumeType?: 'software' | 'qa'): string {
-  let template = useMinimal ? BASE_RESUME_TEMPLATE_MINIMAL : BASE_RESUME_TEMPLATE;
+  let template = useMinimal ? BASE_RESUME_TEMPLATE_MINIMAL() : BASE_RESUME_TEMPLATE();
   if (resumeType === 'qa' && !useMinimal) {
-    template = BASE_RESUME_TEMPLATE_QA;
+    template = BASE_RESUME_TEMPLATE_QA();
   }
   return template
     // .replace('{{FULL_NAME}}', ENV_PROFILE.fullName)
@@ -1121,12 +1132,12 @@ function buildResumePromptInputs(args: {
   const { jobDescription, extraNotes, baseResume, roleLine, generateWithoutJD } = args;
   if (generateWithoutJD) {
     return {
-      systemPrompt: SYSTEM_PROMPT_ROLE_ONLY,
+      systemPrompt: SYSTEM_PROMPT_ROLE_ONLY(),
       userContent: `BASE RESUME:\n${baseResume}\n\nTARGET ROLE:\n${roleLine}\n\nEXTRA NOTES:\n${extraNotes}`,
     };
   }
   return {
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: SYSTEM_PROMPT(),
     userContent: `BASE RESUME:\n${baseResume}\n\nJOB DESCRIPTION:\n${sanitizeJobDescription(jobDescription)}\n\nEXTRA NOTES:\n${extraNotes}`,
   };
 }
@@ -1145,9 +1156,8 @@ export async function generateCoverLetterJSON(
     const model = options?.modelSelect || OPENCODE_MODEL;
     const sanitizedJD = sanitizeJobDescription(jobDescription);
 
-    const COVER_LETTER_SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'cover-letter-system-prompt.txt'), 'utf8');
     const useStar = options?.useStarMethodForGovtRoles ?? false;
-    const coverPrompt = useStar ? COVER_LETTER_SYSTEM_PROMPT_STAR : COVER_LETTER_SYSTEM_PROMPT;
+    const coverPrompt = useStar ? COVER_LETTER_SYSTEM_PROMPT_STAR() : COVER_LETTER_SYSTEM_PROMPT();
     const colleagueFeedback = loadColleagueFeedback();
     const privacySafeResume = sanitizeResumeForExternalCoverLetterModel(structuredResume);
     const userContent = `COMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\nJOB DESCRIPTION:\n${sanitizedJD}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}\n\nRESUME:\n${JSON.stringify(privacySafeResume, null, 2)}`;
@@ -1238,8 +1248,8 @@ function buildCombinedPromptInputs(args: {
   const userContent = `BASE RESUME:\n${baseResume}\n\nCOMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\n${targetContext}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}`;
 
   const systemPrompt = useStarMethod
-    ? `${COMBINED_SYSTEM_PROMPT}\n\nFor the coverLetter output, also apply this mode:\n${GOVT_STAR_METHOD_PROMPT_APPENDIX}`
-    : COMBINED_SYSTEM_PROMPT;
+    ? `${COMBINED_SYSTEM_PROMPT()}\n\nFor the coverLetter output, also apply this mode:\n${GOVT_STAR_METHOD_PROMPT_APPENDIX()}`
+    : COMBINED_SYSTEM_PROMPT();
 
   return { systemPrompt, userContent };
 }
@@ -1338,7 +1348,7 @@ export async function extractATSKeywordsFromJDViaAI(
       model: 'openai/gpt-4o',
       temperature: 0.3,
       messages: [
-        { role: 'system', content: ATS_KEYWORD_EXTRACTION_PROMPT },
+        { role: 'system', content: ATS_KEYWORD_EXTRACTION_PROMPT() },
         { role: 'user', content: `JOB DESCRIPTION:\n${sanitizedJD}` },
       ],
     });
@@ -1385,7 +1395,7 @@ export function analyzeATSKeywordsAgainstResume(
 }
 
 export function buildPrivacySafeBaseResumeForExternalModel(): string {
-  const template = BASE_RESUME_TEMPLATE;
+  const template = BASE_RESUME_TEMPLATE();
   const formatEducationLine = (entry: { institution: string; location: string; degree: string; dates: string }) =>
     `${entry.institution}, ${entry.location} | ${entry.degree} | ${entry.dates}`;
 

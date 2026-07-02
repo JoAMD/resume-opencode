@@ -5,7 +5,8 @@ import { ResumeData, ResumeEducation, ResumeExperience, ResumeProject } from './
 import { normaliseBodyParagraph } from './ai';
 
 const projectRoot = findProjectRoot(__dirname);
-const TEMPLATE_PATH = path.join(projectRoot, 'templates', 'resume.tex.template');
+const TEMPLATES_DIR = process.env.OPENCODE_TEMPLATES_DIR || path.join(projectRoot, 'templates');
+const TEMPLATE_PATH = path.join(TEMPLATES_DIR, 'resume.tex.template');
 
 function toText(value: unknown): string {
   if (value === null || value === undefined) {
@@ -131,7 +132,7 @@ function removeSectionIfEmpty(template: string, sectionTitle: string, hasContent
 
 export function buildLatex(json: ResumeData, resumeType?: 'software' | 'qa'): string {
   const templateName = resumeType === 'qa' ? 'resume-qa.tex.template' : 'resume.tex.template';
-  const templatePath = path.join(projectRoot, 'templates', templateName);
+  const templatePath = path.join(TEMPLATES_DIR, templateName);
   let template = fs.readFileSync(templatePath, 'utf8');
   const data = asRecord(json);
   const skills = asRecord(data.skills);
@@ -178,7 +179,7 @@ export function buildCoverLetterLatex(cl: {
   closingParagraph: string;
   signoff: string;
 }): string {
-  const templatePath = path.join(projectRoot, 'templates', 'cover-letter.tex.template');
+  const templatePath = path.join(TEMPLATES_DIR, 'cover-letter.tex.template');
   let template = fs.readFileSync(templatePath, 'utf8');
 
   const replace = (ph: string, value: string) =>
