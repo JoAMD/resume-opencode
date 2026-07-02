@@ -192,6 +192,30 @@
       oscillator.stop(audioCtx.currentTime + 0.5);
     }
 
+    function playFailureSound() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      // Descending two-note buzz: E5 -> C5, sawtooth for harsher tone
+      oscillator.frequency.setValueAtTime(659.25, audioCtx.currentTime); // E5
+      oscillator.frequency.setValueAtTime(392.00, audioCtx.currentTime + 0.18); // G4
+      oscillator.frequency.setValueAtTime(261.63, audioCtx.currentTime + 0.36); // C4
+      oscillator.type = 'sawtooth';
+
+      gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+
+      oscillator.start(audioCtx.currentTime);
+      oscillator.stop(audioCtx.currentTime + 0.6);
+    }
+
     const form = document.getElementById('resume-form');
     const status = document.getElementById('status');
     const result = document.getElementById('result');
@@ -369,6 +393,7 @@
           setTimeout(() => window.open(data.coverPdfUrl, '_blank'), 500);
         }
       } catch (err) {
+        playFailureSound();
         status.className = 'status error';
         status.textContent = `Error: ${err.message}`;
       } finally {
@@ -379,43 +404,53 @@
 
     // Cover letter generation
     document.getElementById('generate-cover-letter-btn').addEventListener('click', async () => {
-      const jobDescription = document.getElementById('jobDescription').value.trim();
-      const coverOutput = document.getElementById('cover-output')?.value || 'pdf';
-      const modelSelect = document.getElementById('model-select')?.value;
-      const useStarMethodForGovtRoles = document.getElementById('useStarMethodForGovtRoles').checked;
-      const folderPath = document.getElementById('folderPath').value.trim();
-      const res = await fetch('/generate/coverLetter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyName: document.getElementById('companyName').value.trim(),
-          roleName: document.getElementById('roleName').value.trim(),
-          jobDescription,
-          coverOutput,
-          modelSelect,
-          useStarMethodForGovtRoles,
-          folderPath,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
-      playSuccessSound();
-      if (data.pdfUrl) {
-        window.open(data.pdfUrl, '_blank');
-      } else if (data.txtUrl) {
-        window.open(data.txtUrl, '_blank');
-      } else {
-        alert('Cover letter generated (no PDF).');
+      try {
+        const jobDescription = document.getElementById('jobDescription').value.trim();
+        const coverOutput = document.getElementById('cover-output')?.value || 'pdf';
+        const modelSelect = document.getElementById('model-select')?.value;
+        const useStarMethodForGovtRoles = document.getElementById('useStarMethodForGovtRoles').checked;
+        const folderPath = document.getElementById('folderPath').value.trim();
+        const res = await fetch('/generate/coverLetter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyName: document.getElementById('companyName').value.trim(),
+            roleName: document.getElementById('roleName').value.trim(),
+            jobDescription,
+            coverOutput,
+            modelSelect,
+            useStarMethodForGovtRoles,
+            folderPath,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        playSuccessSound();
+        if (data.pdfUrl) {
+          window.open(data.pdfUrl, '_blank');
+        } else if (data.txtUrl) {
+          window.open(data.txtUrl, '_blank');
+        } else {
+          alert('Cover letter generated (no PDF).');
+        }
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
       }
     });
 
     // Compile last .tex
     document.getElementById('compile-last-tex-btn').addEventListener('click', async () => {
-      const res = await fetch('/generate/compileLastTex', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
-      playSuccessSound();
-      window.open(data.pdfUrl, '_blank');
+      try {
+        const res = await fetch('/generate/compileLastTex', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        playSuccessSound();
+        window.open(data.pdfUrl, '_blank');
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
+      }
     });
 
     // Compile all .tex files in jobs folder or given path
@@ -425,15 +460,20 @@
         folderPath = prompt('Enter folder path containing .tex files (or leave empty for default jobs folder):');
         if (folderPath === null) return; // cancelled
       }
-      const res = await fetch('/generate/compileFolderTex', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
-      playSuccessSound();
-      alert('Compiled ' + data.count + ' files');
+      try {
+        const res = await fetch('/generate/compileFolderTex', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        playSuccessSound();
+        alert('Compiled ' + data.count + ' files');
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
+      }
     });
 
     // Generate LaTeX from structured JSON (provide path to structured-output.json or folder)
@@ -443,19 +483,24 @@
         structuredPath = prompt('Enter path to structured-output.json or folder containing it:');
         if (structuredPath === null) return;
       }
-      const res = await fetch('/generate/latexFromStructured', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ structuredPath }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
-      playSuccessSound();
-      if (data.txtUrl) {
-        window.open(data.txtUrl, '_blank');
-      }
-      if (data.pdfUrl) {
-        setTimeout(() => window.open(data.pdfUrl, '_blank'), 300);
+      try {
+        const res = await fetch('/generate/latexFromStructured', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ structuredPath }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        playSuccessSound();
+        if (data.txtUrl) {
+          window.open(data.txtUrl, '_blank');
+        }
+        if (data.pdfUrl) {
+          setTimeout(() => window.open(data.pdfUrl, '_blank'), 300);
+        }
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
       }
     });
 
@@ -501,17 +546,22 @@
         return;
       }
 
-      const res = await fetch('/generate/runATSAnalysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
-      playSuccessSound();
+      try {
+        const res = await fetch('/generate/runATSAnalysis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        playSuccessSound();
 
-      const missing = data.missingFromResume?.slice(0, 10).join(', ') + (data.missingFromResume?.length > 10 ? '...' : '');
-      alert(`ATS Coverage: ${data.coveragePercent}%\n\nMissing keywords: ${missing || 'none'}`);
+        const missing = data.missingFromResume?.slice(0, 10).join(', ') + (data.missingFromResume?.length > 10 ? '...' : '');
+        alert(`ATS Coverage: ${data.coveragePercent}%\n\nMissing keywords: ${missing || 'none'}`);
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
+      }
     });
 
     // Mark as applied
@@ -519,19 +569,25 @@
       const folderPath = document.getElementById('folderPath').value.trim();
       console.log('Mark as Applied clicked: folderPath=', folderPath, 'lastTaskId=', lastTaskId);
 
-      const res = await fetch('/generate/markApplied', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath, taskId: lastTaskId }),
-      });
-      const data = await res.json();
-      console.log('markApplied response:', res.status, data);
-      if (!res.ok) {
-        alert(data.error || 'Error marking as applied');
-        return;
+      try {
+        const res = await fetch('/generate/markApplied', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath, taskId: lastTaskId }),
+        });
+        const data = await res.json();
+        console.log('markApplied response:', res.status, data);
+        if (!res.ok) {
+          playFailureSound();
+          alert(data.error || 'Error marking as applied');
+          return;
+        }
+        playSuccessSound();
+        alert(`Marked as applied: ${data.newPath}`);
+      } catch (err) {
+        playFailureSound();
+        alert(`Error: ${err.message}`);
       }
-      playSuccessSound();
-      alert(`Marked as applied: ${data.newPath}`);
     });
   </script>
 </body>
