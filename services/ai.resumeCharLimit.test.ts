@@ -184,7 +184,7 @@ describe('enforceResumeCharLimit', () => {
   it('returns immediately with false when resume is under limit', async () => {
     const { enforceResumeCharLimit } = await loadModule();
     const small = buildSmallResume();
-    const result = await enforceResumeCharLimit(small, 'opencode/gpt-5-nano', tmpLogDir);
+    const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', tmpLogDir);
     expect(result.characterCountTrimmed).toBe('false');
     expect(sessionCalls.filter((c) => c.method === 'prompt')).toHaveLength(0);
   });
@@ -246,7 +246,7 @@ async function runTrimTestCase(
 ) {
   const big = buildOversizedResume();
   mockStructuredResponse = mockNextResponse;
-  return enforceResumeCharLimit(big, 'opencode/gpt-5-nano', fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')));
+  return enforceResumeCharLimit(big, 'opencode-go/minimax-m2.7', fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')));
 }
 
 async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: string; providedSessionId?: string }) {
@@ -254,7 +254,7 @@ async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: stri
   process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = String(args.maxAttempts);
   const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
   mockStructuredResponse = buildOversizedResume();
-  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode/gpt-5-nano', args.logDir, args.providedSessionId);
+  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', args.logDir, args.providedSessionId);
   expect(result.characterCountTrimmed).toBe('true');
   expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
   return {
