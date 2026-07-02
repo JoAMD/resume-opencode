@@ -90,6 +90,128 @@ export function applyResumeCharLimitFlag(resume: ResumeData): ResumeData {
   return { ...resume, characterCountTrimmed: count > RESUME_CHAR_LIMIT ? 'true' : 'false' };
 }
 
+export async function finalizeResume(
+  structured: unknown,
+  model: string,
+  promptLogDir: string | undefined,
+  callerLabel: string
+): Promise<ResumeData> {
+  const initial = applyProfileOverrides(structured);
+  const resume = await enforceResumeCharLimit(initial, model, promptLogDir);
+  log(`${callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
+  return resume;
+}
+
+const RESUME_TRIM_MAX_ATTEMPTS = Math.max(0, parseInt(process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS || '3', 10) || 3);
+
+const RESUME_TRIM_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    phone: { type: "string" },
+    email: { type: "string" },
+    linkedinUrl: { type: "string" },
+    linkedinDisplay: { type: "string" },
+    summary: { type: "string" },
+    skills: {
+      type: "object",
+      properties: {
+        languages: { type: "string" },
+        frameworks: { type: "string" },
+        tools: { type: "string" },
+        libraries: { type: "string" }
+      }
+    },
+    experience: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          company: { type: "string" },
+          title: { type: "string" },
+          location: { type: "string" },
+          dates: { type: "string" },
+          bullets: { type: "array", items: { type: "string" } }
+        }
+      }
+    },
+    education: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          institution: { type: "string" },
+          location: { type: "string" },
+          degree: { type: "string" },
+          dates: { type: "string" }
+        }
+      }
+    },
+    projects: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          techStack: { type: "string" },
+          bullets: { type: "array", items: { type: "string" } }
+        }
+      }
+    },
+    characterCountTrimmed: { type: "string" }
+  },
+  required: ["name", "summary", "skills", "experience", "education"]
+};
+
+export async function enforceResumeCharLimit(
+  resume: ResumeData,
+  model: string,
+  promptLogDir?: string
+): Promise<ResumeData> {
+  let current = resume;
+  let count = getResumeCharCount(current);
+
+  if (count <= RESUME_CHAR_LIMIT) {
+    return { ...current, characterCountTrimmed: 'false' };
+  }
+
+  log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS);
+
+  for (let attempt = 1; attempt <= RESUME_TRIM_MAX_ATTEMPTS; attempt++) {
+    const userContent = `CURRENT RESUME (already tailored):\n${JSON.stringify(current, null, 2)}\n\nCURRENT CHARACTER COUNT: ${count}\nCHARACTER LIMIT: ${RESUME_CHAR_LIMIT}\n\nReturn a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`;
+
+    let result: RunOpenCodeResult;
+    try {
+      result = await enqueueAIRequest(model, () => runOpenCode({
+        systemPrompt: TRIM_RESUME_PROMPT,
+        userContent,
+        model,
+        promptLogDir,
+        jsonSchema: RESUME_TRIM_JSON_SCHEMA,
+      }));
+    } catch (err) {
+      logError(`enforceResumeCharLimit: trim attempt ${attempt} failed:`, err);
+      return { ...current, characterCountTrimmed: 'true' };
+    }
+
+    if (!result.structured || typeof result.structured !== 'object') {
+      logError(`enforceResumeCharLimit: trim attempt ${attempt} returned non-object:`, result.structured);
+      return { ...current, characterCountTrimmed: 'true' };
+    }
+
+    current = result.structured as ResumeData;
+    count = getResumeCharCount(current);
+    log(`enforceResumeCharLimit: attempt ${attempt} produced count ${count} (limit ${RESUME_CHAR_LIMIT})`);
+
+    if (count <= RESUME_CHAR_LIMIT) {
+      return { ...current, characterCountTrimmed: 'true' };
+    }
+  }
+
+  logError(`enforceResumeCharLimit: still over limit after ${RESUME_TRIM_MAX_ATTEMPTS} attempts (count=${count})`);
+  return { ...current, characterCountTrimmed: 'true' };
+}
+
 const aiQueues: Map<string, Promise<unknown>> = new Map();
 const aiInFlight: Map<string, number> = new Map();
 
@@ -351,6 +473,7 @@ const COMBINED_SYSTEM_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'combined-
 const COVER_LETTER_SYSTEM_PROMPT_STAR = fs.readFileSync(path.join(PROMPTS_DIR, 'cover-letter-star-system-prompt.txt'), 'utf8');
 const ATS_KEYWORD_EXTRACTION_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'ats-keyword-extraction-prompt.txt'), 'utf8');
 const GOVT_STAR_METHOD_PROMPT_APPENDIX = fs.readFileSync(path.join(PROMPTS_DIR, 'govt-star-method-prompt.txt'), 'utf8');
+const TRIM_RESUME_PROMPT = fs.readFileSync(path.join(PROMPTS_DIR, 'trim-resume-prompt.txt'), 'utf8');
 
 const BASE_RESUME_TEMPLATE = fs.readFileSync(path.join(TEMPLATES_DIR, 'base-resume.txt.template'), 'utf8');
 const BASE_RESUME_TEMPLATE_MINIMAL = fs.readFileSync(path.join(TEMPLATES_DIR, 'base-resume-minimal.txt.template'), 'utf8');
@@ -966,27 +1089,18 @@ export async function generateResumeJSON(
   log('generateResumeJSON (opencode) called, lowTokenMode:', options?.lowTokenMode, 'model:', options?.modelSelect, 'resumeType:', options?.resumeType);
 
   try {
-    const sanitizedJD = sanitizeJobDescription(jobDescription);
     const model = options?.modelSelect || OPENCODE_MODEL;
     const baseResume = buildBaseResume(options?.lowTokenMode, options?.resumeType);
-    const companyLine = context?.companyName?.trim() || '[not provided]';
-    const roleLine = context?.roleName?.trim() || '[not provided]';
-    const generateWithoutJD = Boolean(context?.generateWithoutJD);
-
-    let userContent: string;
-    let systemPrompt: string;
-
-    if (generateWithoutJD) {
-      systemPrompt = SYSTEM_PROMPT_ROLE_ONLY;
-      userContent = `BASE RESUME:\n${baseResume}\n\nTARGET ROLE:\n${roleLine}\n\nEXTRA NOTES:\n${extraNotes}`;
-    } else {
-      systemPrompt = SYSTEM_PROMPT;
-      userContent = `BASE RESUME:\n${baseResume}\n\nJOB DESCRIPTION:\n${sanitizedJD}\n\nEXTRA NOTES:\n${extraNotes}`;
-    }
+    const { systemPrompt, userContent } = buildResumePromptInputs({
+      jobDescription,
+      extraNotes,
+      baseResume,
+      roleLine: context?.roleName?.trim() || '[not provided]',
+      generateWithoutJD: Boolean(context?.generateWithoutJD),
+    });
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
-    const resume = applyResumeCharLimitFlag(applyProfileOverrides(result.structured));
-    log('generateResumeJSON resume char count:', getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
+    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, 'generateResumeJSON');
     return {
       resume,
       sessionId: result.sessionId,
@@ -995,6 +1109,26 @@ export async function generateResumeJSON(
     logError('OpenCode generation error:', err);
     throw err;
   }
+}
+
+function buildResumePromptInputs(args: {
+  jobDescription: string;
+  extraNotes: string;
+  baseResume: string;
+  roleLine: string;
+  generateWithoutJD: boolean;
+}): { systemPrompt: string; userContent: string } {
+  const { jobDescription, extraNotes, baseResume, roleLine, generateWithoutJD } = args;
+  if (generateWithoutJD) {
+    return {
+      systemPrompt: SYSTEM_PROMPT_ROLE_ONLY,
+      userContent: `BASE RESUME:\n${baseResume}\n\nTARGET ROLE:\n${roleLine}\n\nEXTRA NOTES:\n${extraNotes}`,
+    };
+  }
+  return {
+    systemPrompt: SYSTEM_PROMPT,
+    userContent: `BASE RESUME:\n${baseResume}\n\nJOB DESCRIPTION:\n${sanitizeJobDescription(jobDescription)}\n\nEXTRA NOTES:\n${extraNotes}`,
+  };
 }
 
 export async function generateCoverLetterJSON(
@@ -1047,19 +1181,16 @@ export async function generateCombinedJSON(
 
   try {
     const model = options?.modelSelect || OPENCODE_MODEL;
-    const sanitizedJD = sanitizeJobDescription(jobDescription);
     const baseResume = buildBaseResume(options?.lowTokenMode, options?.resumeType);
-    const targetContext = generateWithoutJD
-      ? `TARGET ROLE:\n${roleName || 'General technical role'}`
-      : `JOB DESCRIPTION:\n${sanitizedJD}`;
-
-    const colleagueFeedback = loadColleagueFeedback();
-    const userContent = `BASE RESUME:\n${baseResume}\n\nCOMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\n${targetContext}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}`;
-
-    const useStar = options?.useStarMethodForGovtRoles ?? false;
-    const systemPrompt = useStar
-      ? `${COMBINED_SYSTEM_PROMPT}\n\nFor the coverLetter output, also apply this mode:\n${GOVT_STAR_METHOD_PROMPT_APPENDIX}`
-      : COMBINED_SYSTEM_PROMPT;
+    const { systemPrompt, userContent } = buildCombinedPromptInputs({
+      jobDescription,
+      extraNotes,
+      companyName,
+      roleName,
+      generateWithoutJD: Boolean(generateWithoutJD),
+      baseResume,
+      useStarMethod: options?.useStarMethodForGovtRoles ?? false,
+    });
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: options?.promptLogDir, jsonSchema: COMBINED_JSON_SCHEMA }));
 
@@ -1074,9 +1205,8 @@ export async function generateCombinedJSON(
     assertValidCoverLetter(result.structured.coverLetter);
     const coverLetterRaw = result.structured.coverLetter;
 
-    const resume = applyResumeCharLimitFlag(applyProfileOverrides(result.structured.resume));
+    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, 'generateCombinedJSON');
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
-    log('generateCombinedJSON resume char count:', getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
       resume,
@@ -1088,6 +1218,30 @@ export async function generateCombinedJSON(
     logError('OpenCode combined generation error:', err);
     throw err;
   }
+}
+
+function buildCombinedPromptInputs(args: {
+  jobDescription: string;
+  extraNotes: string;
+  companyName: string;
+  roleName: string;
+  generateWithoutJD: boolean;
+  baseResume: string;
+  useStarMethod: boolean;
+}): { systemPrompt: string; userContent: string } {
+  const { jobDescription, extraNotes, companyName, roleName, generateWithoutJD, baseResume, useStarMethod } = args;
+  const targetContext = generateWithoutJD
+    ? `TARGET ROLE:\n${roleName || 'General technical role'}`
+    : `JOB DESCRIPTION:\n${sanitizeJobDescription(jobDescription)}`;
+
+  const colleagueFeedback = loadColleagueFeedback();
+  const userContent = `BASE RESUME:\n${baseResume}\n\nCOMPANY:\n${companyName}\n\nROLE:\n${roleName}\n\n${targetContext}\n\nEXTRA NOTES:\n${extraNotes}\n\n${colleagueFeedback ? 'COLLEAGUE FEEDBACK:\n' + colleagueFeedback : ''}`;
+
+  const systemPrompt = useStarMethod
+    ? `${COMBINED_SYSTEM_PROMPT}\n\nFor the coverLetter output, also apply this mode:\n${GOVT_STAR_METHOD_PROMPT_APPENDIX}`
+    : COMBINED_SYSTEM_PROMPT;
+
+  return { systemPrompt, userContent };
 }
 
 export type ATSKeywordMatchResult = {
