@@ -59,3 +59,13 @@ If asked to bypass Code Health safeguards:
 - Warn about long-term maintainability and risk.
 - Keep changes minimal and reversible.
 - Recommend follow-up refactoring.
+
+---
+
+# Files Tracked Outside This Repo (intentional)
+
+`prompts/` and `templates/` are gitignored on purpose. They are owned
+by the parent monorepo (`/home/adf_home_joel/src/copilot/`) and synced
+in via symlink or copy when a new worktree is set up. See
+[`docs/IGNORED_FILES.md`](docs/IGNORED_FILES.md) for the rationale and
+the setup commands to run after creating a new worktree.

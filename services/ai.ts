@@ -94,11 +94,11 @@ export async function finalizeResume(
   structured: unknown,
   model: string,
   promptLogDir: string | undefined,
-  callerLabel: string
+  meta: { callerLabel: string; providedSessionId?: string }
 ): Promise<ResumeData> {
   const initial = applyProfileOverrides(structured);
-  const resume = await enforceResumeCharLimit(initial, model, promptLogDir);
-  log(`${callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
+  const resume = await enforceResumeCharLimit(initial, model, promptLogDir, meta.providedSessionId);
+  log(`${meta.callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
   return resume;
 }
 
@@ -166,7 +166,8 @@ const RESUME_TRIM_JSON_SCHEMA = {
 export async function enforceResumeCharLimit(
   resume: ResumeData,
   model: string,
-  promptLogDir?: string
+  promptLogDir?: string,
+  providedSessionId?: string
 ): Promise<ResumeData> {
   let current = resume;
   let count = getResumeCharCount(current);
@@ -175,7 +176,7 @@ export async function enforceResumeCharLimit(
     return { ...current, characterCountTrimmed: 'false' };
   }
 
-  log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS);
+  log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS, 'providedSessionId:', providedSessionId ?? '<none>');
 
   for (let attempt = 1; attempt <= RESUME_TRIM_MAX_ATTEMPTS; attempt++) {
     const userContent = `CURRENT RESUME (already tailored):\n${JSON.stringify(current, null, 2)}\n\nCURRENT CHARACTER COUNT: ${count}\nCHARACTER LIMIT: ${RESUME_CHAR_LIMIT}\n\nReturn a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`;
@@ -188,6 +189,8 @@ export async function enforceResumeCharLimit(
         model,
         promptLogDir,
         jsonSchema: RESUME_TRIM_JSON_SCHEMA,
+        providedSessionId,
+        ownsSession: false,
       }));
     } catch (err) {
       logError(`enforceResumeCharLimit: trim attempt ${attempt} failed:`, err);
@@ -531,6 +534,8 @@ interface RunOpenCodeOptions {
   model?: string;
   promptLogDir?: string;
   jsonSchema?: object;
+  providedSessionId?: string;
+  ownsSession?: boolean;
 }
 
 interface RunOpenCodeResult {
@@ -882,6 +887,8 @@ function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
       const pipeline = await runOpenCodePipeline({
         modelToUse, fullPrompt, jsonSchema, useStructuredOutput, model,
         outputFilePath, runStartMs,
+        providedSessionId: opts.providedSessionId,
+        ownsSession: opts.ownsSession,
       });
       resolve(pipeline);
     } catch (err) {
@@ -901,6 +908,8 @@ interface PipelineContext {
   model?: string;
   outputFilePath: string | null;
   runStartMs: number;
+  providedSessionId?: string;
+  ownsSession?: boolean;
 }
 
 async function resolvePromptResult(
@@ -937,17 +946,27 @@ async function resolvePromptResult(
   };
 }
 
+async function acquireSessionId(client: any, providedSessionId: string | undefined, modelToUse: string, runStartMs: number): Promise<string> {
+  if (providedSessionId) {
+    log('Reusing session in:', projectRoot, '(id=' + providedSessionId + ')');
+    return providedSessionId;
+  }
+  log('Creating session in:', projectRoot);
+  const sessionStartMs = Date.now();
+  const id = await createOpencodeSession(client, modelToUse);
+  log(`[timing] session.create OK in ${Date.now() - sessionStartMs}ms (id=${id}, total elapsed: ${Date.now() - runStartMs}ms)`);
+  return id;
+}
+
 async function runOpenCodePipeline(ctx: PipelineContext): Promise<RunOpenCodeResult> {
   let client: any = null;
   let sessionId: string | null = null;
+  const ownsSession = ctx.ownsSession !== false;
   try {
     client = await getOpencodeClient();
     log(`[timing] getOpencodeClient OK in ${Date.now() - ctx.runStartMs}ms`);
-    log('Creating session in:', projectRoot);
 
-    const sessionStartMs = Date.now();
-    sessionId = await createOpencodeSession(client, ctx.modelToUse);
-    log(`[timing] session.create OK in ${Date.now() - sessionStartMs}ms (id=${sessionId}, total elapsed: ${Date.now() - ctx.runStartMs}ms)`);
+    sessionId = await acquireSessionId(client, ctx.providedSessionId, ctx.modelToUse, ctx.runStartMs);
     const promptBody = buildPromptBody(ctx.fullPrompt, ctx.jsonSchema, ctx.useStructuredOutput, ctx.model);
 
     const result = await executeOpencodePrompt(client, sessionId, promptBody);
@@ -961,10 +980,14 @@ async function runOpenCodePipeline(ctx: PipelineContext): Promise<RunOpenCodeRes
       rawModelOutput,
     };
   } finally {
-    if (!OPENCODE_KEEP_SESSION && client && sessionId) {
-      await deleteOpencodeSession(client, sessionId);
+    if (shouldCleanupSession(ownsSession, client, sessionId)) {
+      await deleteOpencodeSession(client, sessionId!);
     }
   }
+}
+
+function shouldCleanupSession(ownsSession: boolean, client: any, sessionId: string | null): boolean {
+  return ownsSession && !OPENCODE_KEEP_SESSION && Boolean(client) && Boolean(sessionId);
 }
 
 export type CoverLetterJSON = {
@@ -1111,7 +1134,7 @@ export async function generateResumeJSON(
     });
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
-    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, 'generateResumeJSON');
+    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, { callerLabel: 'generateResumeJSON', providedSessionId: result.sessionId });
     return {
       resume,
       sessionId: result.sessionId,
@@ -1215,7 +1238,7 @@ export async function generateCombinedJSON(
     assertValidCoverLetter(result.structured.coverLetter);
     const coverLetterRaw = result.structured.coverLetter;
 
-    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, 'generateCombinedJSON');
+    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId });
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],

@@ -184,7 +184,7 @@ describe('enforceResumeCharLimit', () => {
   it('returns immediately with false when resume is under limit', async () => {
     const { enforceResumeCharLimit } = await loadModule();
     const small = buildSmallResume();
-    const result = await enforceResumeCharLimit(small, 'opencode/gpt-5-nano', tmpLogDir);
+    const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', tmpLogDir);
     expect(result.characterCountTrimmed).toBe('false');
     expect(sessionCalls.filter((c) => c.method === 'prompt')).toHaveLength(0);
   });
@@ -218,6 +218,25 @@ describe('enforceResumeCharLimit', () => {
     const prompts = sessionCalls.filter((c) => c.method === 'prompt');
     expect(prompts).toHaveLength(1);
   });
+
+  it('reuses the provided session id for trim prompts and does not create or delete sessions', async () => {
+    const { calls } = await runSessionLifecycleCase({ maxAttempts: 2, providedSessionId: 'ses-outer-abc', logDir: tmpLogDir });
+    expect(calls.creates).toHaveLength(0);
+    expect(calls.deletes).toHaveLength(0);
+    expect(calls.prompts).toHaveLength(2);
+    for (const p of calls.prompts) {
+      expect(p.sessionId).toBe('ses-outer-abc');
+    }
+  });
+
+  it('still creates a session for trims when no providedSessionId is supplied (and still does not delete it)', async () => {
+    const { result, calls } = await runSessionLifecycleCase({ maxAttempts: 1, logDir: tmpLogDir });
+    expect(result.characterCountTrimmed).toBe('true');
+    expect(calls.creates).toHaveLength(1);
+    expect(calls.deletes).toHaveLength(0);
+    expect(calls.prompts).toHaveLength(1);
+    expect(calls.creates[0].sessionId).toBe(calls.prompts[0].sessionId);
+  });
 });
 
 async function runTrimTestCase(
@@ -227,5 +246,23 @@ async function runTrimTestCase(
 ) {
   const big = buildOversizedResume();
   mockStructuredResponse = mockNextResponse;
-  return enforceResumeCharLimit(big, 'opencode/gpt-5-nano', fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')));
+  return enforceResumeCharLimit(big, 'opencode-go/minimax-m2.7', fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')));
+}
+
+async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: string; providedSessionId?: string }) {
+  process.env.OPENCODE_KEEP_SESSION = 'false';
+  process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = String(args.maxAttempts);
+  const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+  mockStructuredResponse = buildOversizedResume();
+  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', args.logDir, args.providedSessionId);
+  expect(result.characterCountTrimmed).toBe('true');
+  expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
+  return {
+    result,
+    calls: {
+      creates: sessionCalls.filter((c) => c.method === 'create'),
+      deletes: sessionCalls.filter((c) => c.method === 'delete'),
+      prompts: sessionCalls.filter((c) => c.method === 'prompt'),
+    },
+  };
 }
