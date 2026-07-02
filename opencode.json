@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/gpt-5-nano",
+  "model": "opencode-go/minimax-m3",
   "provider": {
     "opencode-sdk": {
       "name": "OpenCode SDK"
