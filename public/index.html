@@ -38,6 +38,11 @@
       </div>
 
       <div class="field">
+        <label for="link-input">Job posting link <span class="optional">(optional, used for applications.csv)</span></label>
+        <input type="text" id="link-input" placeholder="https://www.seek.com.au/job/..." />
+      </div>
+
+      <div class="field">
         <label for="jobDescription">Job Description <span class="optional">(optional if using role-title-only mode)</span></label>
         <textarea id="jobDescription" rows="14" placeholder="Paste the full job description here..."></textarea>
       </div>
@@ -314,6 +319,22 @@
       }
     }
 
+    function formatDuplicateMessage(data, fallback) {
+      const row = data && data.row ? data.row : {};
+      const when = row.applied_at || '(unknown)';
+      const who = row.company || fallback.company || '';
+      const what = row.role || fallback.role || '';
+      const matchedBy = data && data.matchedBy === 'link' ? 'link' : 'company + role';
+      return (
+        `This looks like a job you've already applied to.\n` +
+        `  Matched by: ${matchedBy}\n` +
+        `  Applied at: ${when}\n` +
+        `  Company:   ${who}\n` +
+        `  Role:      ${what}\n` +
+        `Continue generating a new resume?`
+      );
+    }
+
     async function generateResume(e, combined) {
       const noJdMode = document.getElementById('noJdMode').checked;
       const jdValue = document.getElementById('jobDescription').value.trim();
@@ -332,28 +353,50 @@
         : 'Calling AI for resume only — this may take 20–40 seconds…';
       result.className = 'result hidden';
 
+      const buildPayload = (force) => ({
+        companyName: document.getElementById('companyName').value.trim(),
+        roleName: document.getElementById('roleName').value.trim(),
+        link: document.getElementById('link-input').value.trim(),
+        jobDescription: jdValue,
+        fullJD: document.getElementById('seek-input').value.trim(),
+        extraNotes: document.getElementById('extraNotes').value.trim(),
+        generateWithoutJD: noJdMode,
+        modelPreference: document.getElementById('modelPreference').value,
+        lowTokenMode: document.getElementById('lowTokenMode').checked,
+        useCombinedGeneration: combined,
+        coverOutput: document.getElementById('cover-output')?.value || 'pdf',
+        modelSelect: document.getElementById('model-select')?.value,
+        useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
+        resumeType: document.getElementById('resumeType').value,
+        force,
+      });
+
       try {
-        const res = await fetch('/generate/', {
+        let res = await fetch('/generate/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            companyName: document.getElementById('companyName').value.trim(),
-            roleName: document.getElementById('roleName').value.trim(),
-            jobDescription: jdValue,
-            fullJD: document.getElementById('seek-input').value.trim(),
-            extraNotes: document.getElementById('extraNotes').value.trim(),
-            generateWithoutJD: noJdMode,
-            modelPreference: document.getElementById('modelPreference').value,
-            lowTokenMode: document.getElementById('lowTokenMode').checked,
-            useCombinedGeneration: combined,
-            coverOutput: document.getElementById('cover-output')?.value || 'pdf',
-            modelSelect: document.getElementById('model-select')?.value,
-            useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
-            resumeType: document.getElementById('resumeType').value,
-          }),
+          body: JSON.stringify(buildPayload(false)),
         });
+        let data = await res.json();
 
-        const data = await res.json();
+        if (res.status === 409 && data && data.error === 'duplicate-application') {
+          const fallback = {
+            company: buildPayload(false).companyName,
+            role: buildPayload(false).roleName,
+          };
+          const proceed = window.confirm(formatDuplicateMessage(data, fallback));
+          if (!proceed) {
+            status.className = 'status';
+            status.textContent = 'Generation cancelled — duplicate detected.';
+            return;
+          }
+          res = await fetch('/generate/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildPayload(true)),
+          });
+          data = await res.json();
+        }
 
         if (!res.ok) {
           throw new Error(data.error || `Server error ${res.status}`);
@@ -368,6 +411,7 @@
         // Show result with resume PDF
         document.getElementById('pdf-link').href = result.pdfUrl;
         let folderText = `Saved to: jobs/${result.jobDir}/`;
+        lastJobDir = result.jobDir;
         if (result.coverPdfUrl) {
           folderText += ` | Cover: ${result.coverPdfUrl}`;
         }
@@ -535,8 +579,9 @@
       }
     });
 
-    // Store last task ID for per-tab tracking
+    // Store last task ID and last job dir for per-tab tracking
     let lastTaskId = null;
+    let lastJobDir = null;
 
     // Run ATS analysis
     document.getElementById('run-ats-analysis-btn').addEventListener('click', async () => {
@@ -567,13 +612,16 @@
     // Mark as applied
     document.getElementById('mark-applied-btn').addEventListener('click', async () => {
       const folderPath = document.getElementById('folderPath').value.trim();
+      const company = document.getElementById('companyName').value.trim();
+      const role = document.getElementById('roleName').value.trim();
+      const link = document.getElementById('link-input').value.trim();
       console.log('Mark as Applied clicked: folderPath=', folderPath, 'lastTaskId=', lastTaskId);
 
       try {
         const res = await fetch('/generate/markApplied', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderPath, taskId: lastTaskId }),
+          body: JSON.stringify({ folderPath, taskId: lastTaskId, company, role, link, job_dir: lastJobDir }),
         });
         const data = await res.json();
         console.log('markApplied response:', res.status, data);
@@ -583,7 +631,12 @@
           return;
         }
         playSuccessSound();
-        alert(`Marked as applied: ${data.newPath}`);
+        const csvLine = data.csvAppended
+          ? '\nAdded a row to jobs/applications.csv.'
+          : data.csvSkippedReason === 'duplicate-job-dir'
+          ? '\nNo CSV row added (already had an entry for this job folder).'
+          : '\nNo CSV row added.';
+        alert(`Marked as applied: ${data.newPath}${csvLine}`);
       } catch (err) {
         playFailureSound();
         alert(`Error: ${err.message}`);

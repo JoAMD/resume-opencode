@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -10,6 +10,7 @@ import { buildLatex, buildCoverLetterLatex } from '../services/latex';
 import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
+import { appendApplication, findApplications, writeLinkToJobDir, type ApplicationRow } from '../services/applications';
 
 const router = Router();
 
@@ -27,6 +28,7 @@ type GenerateRequestBody = {
   fullJD?: string;
   companyName?: string;
   roleName?: string;
+  link?: string;
   extraNotes?: string;
   generateWithoutJD?: boolean;
   coverOutput?: 'pdf' | 'txt' | 'none';
@@ -36,6 +38,7 @@ type GenerateRequestBody = {
   useStarMethodForGovtRoles?: boolean;
   resumeType?: 'software' | 'qa';
   useCombinedGeneration?: boolean;
+  force?: boolean;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -136,6 +139,8 @@ function formatOtherInput(body: GenerateRequestBody): string {
   lines.push('');
   lines.push(`Role / Title: ${body.roleName ?? ''}`);
   lines.push('');
+  lines.push(`Job posting link: ${body.link ?? ''}`);
+  lines.push('');
   lines.push('Job Description:');
   lines.push(body.jobDescription ? '(see job-description.txt)' : '(empty)');
   lines.push('');
@@ -225,6 +230,27 @@ router.get('/task/:taskId', (req, res) => {
   });
 });
 
+function hasLookupCriteria(body: GenerateRequestBody): boolean {
+  if (body.link?.trim()) return true;
+  return !!(body.companyName?.trim() && body.roleName?.trim());
+}
+
+function findExistingApplication(body: GenerateRequestBody) {
+  if (!hasLookupCriteria(body)) return null;
+  return findApplications({
+    link: body.link?.trim(),
+    company: body.companyName?.trim(),
+    role: body.roleName?.trim(),
+  });
+}
+
+function duplicateConflictResponse(body: GenerateRequestBody): { matchedBy: 'link' | 'company-role'; row: ApplicationRow } | null {
+  if (body.force) return null;
+  const existing = findExistingApplication(body);
+  if (!existing) return null;
+  return existing;
+}
+
 router.post('/', async (req, res) => {
   const body = req.body as GenerateRequestBody;
   const { jobDescription, companyName, roleName, extraNotes, generateWithoutJD, coverOutput, lowTokenMode, useCombinedGeneration } = body;
@@ -232,6 +258,16 @@ router.post('/', async (req, res) => {
   const validationError = validateGenerateRequest(body);
   if (validationError) {
     res.status(400).json({ error: validationError });
+    return;
+  }
+
+  const conflict = duplicateConflictResponse(body);
+  if (conflict) {
+    res.status(409).json({
+      error: 'duplicate-application',
+      matchedBy: conflict.matchedBy,
+      row: conflict.row,
+    });
     return;
   }
 
@@ -244,6 +280,9 @@ router.post('/', async (req, res) => {
       saveJobFile(jobDir.jobDir, 'full-jd.txt', body.fullJD);
     }
     saveJobFile(jobDir.jobDir, 'other-input.txt', formatOtherInput(body));
+    if (body.link?.trim()) {
+      writeLinkToJobDir(jobDir.jobDir, body.link.trim());
+    }
     const taskId = createTaskId();
     taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
     res.json({ taskId, jobDir: jobDir.slug });
@@ -393,9 +432,49 @@ router.post('/latexFromStructured', async (req, res) => {
   }
 });
 
+function readDuplicateQuery(req: Request): { link?: string; company?: string; role?: string } {
+  const link = typeof req.query.link === 'string' ? req.query.link : undefined;
+  const company = typeof req.query.company === 'string' ? req.query.company : undefined;
+  const role = typeof req.query.role === 'string' ? req.query.role : undefined;
+  return { link, company, role };
+}
+
+function hasUsableDuplicateQuery(q: { link?: string; company?: string; role?: string }): boolean {
+  if (q.link?.trim()) return true;
+  return !!(q.company?.trim() && q.role?.trim());
+}
+
+router.get('/checkDuplicate', (req, res) => {
+  try {
+    const query = readDuplicateQuery(req);
+    if (!hasUsableDuplicateQuery(query)) {
+      res.json({ duplicate: false, matchedBy: null, row: null, checked: false });
+      return;
+    }
+
+    const match = findApplications(query);
+    if (!match) {
+      res.json({ duplicate: false, matchedBy: null, row: null, checked: true });
+      return;
+    }
+    res.json({ duplicate: true, matchedBy: match.matchedBy, row: match.row, checked: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    logError('Check duplicate error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
 router.post('/markApplied', async (req, res) => {
   try {
-    const { folderPath, taskId } = req.body as { folderPath?: string; taskId?: string };
+    const { folderPath, taskId, company, role, link, job_dir } = req.body as {
+      folderPath?: string;
+      taskId?: string;
+      company?: string;
+      role?: string;
+      link?: string;
+      job_dir?: string;
+    };
     log(`markApplied called: folderPath="${folderPath}", taskId="${taskId}"`);
 
     const targetDir = resolveTargetDir({ folderPath, taskId, lastTexPath: lastGeneratedTexPath });
@@ -417,8 +496,24 @@ router.post('/markApplied', async (req, res) => {
       return;
     }
 
-    log(`Marked folder as applied: ${folderName} -> ${path.basename(newDir)}`);
-    res.json({ success: true, oldPath: targetDir, newPath: newDir });
+    const csvResult = appendApplication({
+      company: company ?? '',
+      role: role ?? '',
+      link: link ?? '',
+      job_dir: job_dir ?? path.basename(newDir),
+    });
+
+    log(
+      `Marked folder as applied: ${folderName} -> ${path.basename(newDir)}` +
+        ` (csvAppended=${csvResult.appended}${csvResult.reason ? `, reason=${csvResult.reason}` : ''})`
+    );
+    res.json({
+      success: true,
+      oldPath: targetDir,
+      newPath: newDir,
+      csvAppended: csvResult.appended,
+      csvSkippedReason: csvResult.appended ? null : csvResult.reason,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Mark applied error:', err);
