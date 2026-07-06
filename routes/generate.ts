@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -400,18 +400,27 @@ router.post('/latexFromStructured', async (req, res) => {
   }
 });
 
+function readDuplicateQuery(req: Request): { link?: string; company?: string; role?: string } {
+  const link = typeof req.query.link === 'string' ? req.query.link : undefined;
+  const company = typeof req.query.company === 'string' ? req.query.company : undefined;
+  const role = typeof req.query.role === 'string' ? req.query.role : undefined;
+  return { link, company, role };
+}
+
+function hasUsableDuplicateQuery(q: { link?: string; company?: string; role?: string }): boolean {
+  if (q.link?.trim()) return true;
+  return !!(q.company?.trim() && q.role?.trim());
+}
+
 router.get('/checkDuplicate', (req, res) => {
   try {
-    const link = typeof req.query.link === 'string' ? req.query.link : undefined;
-    const company = typeof req.query.company === 'string' ? req.query.company : undefined;
-    const role = typeof req.query.role === 'string' ? req.query.role : undefined;
-
-    if (!link?.trim() && !(company?.trim() && role?.trim())) {
+    const query = readDuplicateQuery(req);
+    if (!hasUsableDuplicateQuery(query)) {
       res.json({ duplicate: false, matchedBy: null, row: null, checked: false });
       return;
     }
 
-    const match = findApplications({ link, company, role });
+    const match = findApplications(query);
     if (!match) {
       res.json({ duplicate: false, matchedBy: null, row: null, checked: true });
       return;

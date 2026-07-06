@@ -38,34 +38,44 @@ export function escapeCsvField(value: string): string {
   return str;
 }
 
+type ParserState = { fields: string[]; current: string; inQuotes: boolean };
+
+function nextInQuotes(state: ParserState, ch: string, peek: string): boolean {
+  if (ch === '"' && peek === '"') {
+    state.current += '"';
+    return false;
+  }
+  if (ch === '"') {
+    state.inQuotes = false;
+    return false;
+  }
+  state.current += ch;
+  return false;
+}
+
+function nextOutOfQuotes(state: ParserState, ch: string): boolean {
+  if (ch === ',') {
+    state.fields.push(state.current);
+    state.current = '';
+    return false;
+  }
+  if (ch === '"' && state.current === '') {
+    state.inQuotes = true;
+    return false;
+  }
+  state.current += ch;
+  return false;
+}
+
 function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
+  const state: ParserState = { fields: [], current: '', inQuotes: false };
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        current += ch;
-      }
-    } else {
-      if (ch === ',') {
-        fields.push(current);
-        current = '';
-      } else if (ch === '"' && current === '') {
-        inQuotes = true;
-      } else {
-        current += ch;
-      }
-    }
+    const handler = state.inQuotes ? nextInQuotes : nextOutOfQuotes;
+    handler(state, ch, line[i + 1]);
   }
-  fields.push(current);
-  return fields;
+  state.fields.push(state.current);
+  return state.fields;
 }
 
 export function readApplications(): ApplicationRow[] {
@@ -159,22 +169,28 @@ export interface FindResult {
   row: ApplicationRow;
 }
 
+function matchByLink(rows: ApplicationRow[], link: string): ApplicationRow | null {
+  return rows.find((r) => r.link.trim() === link) ?? null;
+}
+
+function matchByCompanyRole(rows: ApplicationRow[], company: string, role: string): ApplicationRow | null {
+  const lcCompany = company.toLowerCase();
+  const lcRole = role.toLowerCase();
+  return rows.find((r) => r.company.trim().toLowerCase() === lcCompany && r.role.trim().toLowerCase() === lcRole) ?? null;
+}
+
 export function findApplications(input: FindInput): FindResult | null {
   const rows = readApplications();
-  const trimmedLink = input.link?.trim();
-  if (trimmedLink) {
-    const match = rows.find((r) => r.link.trim() === trimmedLink);
+  const link = input.link?.trim();
+  if (link) {
+    const match = matchByLink(rows, link);
     if (match) return { matchedBy: 'link', row: match };
   }
-  const company = input.company?.trim().toLowerCase();
-  const role = input.role?.trim().toLowerCase();
-  if (company && role) {
-    const match = rows.find(
-      (r) => r.company.trim().toLowerCase() === company && r.role.trim().toLowerCase() === role
-    );
-    if (match) return { matchedBy: 'company-role', row: match };
-  }
-  return null;
+  const company = input.company?.trim();
+  const role = input.role?.trim();
+  if (!company || !role) return null;
+  const match = matchByCompanyRole(rows, company, role);
+  return match ? { matchedBy: 'company-role', row: match } : null;
 }
 
 export function writeLinkToJobDir(jobDirPath: string, link: string): void {
