@@ -10,7 +10,7 @@ import { buildLatex, buildCoverLetterLatex } from '../services/latex';
 import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
-import { appendApplication, findApplications, writeLinkToJobDir } from '../services/applications';
+import { appendApplication, findApplications, writeLinkToJobDir, type ApplicationRow } from '../services/applications';
 
 const router = Router();
 
@@ -38,6 +38,7 @@ type GenerateRequestBody = {
   useStarMethodForGovtRoles?: boolean;
   resumeType?: 'software' | 'qa';
   useCombinedGeneration?: boolean;
+  force?: boolean;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -229,6 +230,27 @@ router.get('/task/:taskId', (req, res) => {
   });
 });
 
+function hasLookupCriteria(body: GenerateRequestBody): boolean {
+  if (body.link?.trim()) return true;
+  return !!(body.companyName?.trim() && body.roleName?.trim());
+}
+
+function findExistingApplication(body: GenerateRequestBody) {
+  if (!hasLookupCriteria(body)) return null;
+  return findApplications({
+    link: body.link?.trim(),
+    company: body.companyName?.trim(),
+    role: body.roleName?.trim(),
+  });
+}
+
+function duplicateConflictResponse(body: GenerateRequestBody): { matchedBy: 'link' | 'company-role'; row: ApplicationRow } | null {
+  if (body.force) return null;
+  const existing = findExistingApplication(body);
+  if (!existing) return null;
+  return existing;
+}
+
 router.post('/', async (req, res) => {
   const body = req.body as GenerateRequestBody;
   const { jobDescription, companyName, roleName, extraNotes, generateWithoutJD, coverOutput, lowTokenMode, useCombinedGeneration } = body;
@@ -236,6 +258,16 @@ router.post('/', async (req, res) => {
   const validationError = validateGenerateRequest(body);
   if (validationError) {
     res.status(400).json({ error: validationError });
+    return;
+  }
+
+  const conflict = duplicateConflictResponse(body);
+  if (conflict) {
+    res.status(409).json({
+      error: 'duplicate-application',
+      matchedBy: conflict.matchedBy,
+      row: conflict.row,
+    });
     return;
   }
 
