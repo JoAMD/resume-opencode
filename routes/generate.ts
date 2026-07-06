@@ -10,7 +10,7 @@ import { buildLatex, buildCoverLetterLatex } from '../services/latex';
 import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
-import { appendApplication, writeLinkToJobDir } from '../services/applications';
+import { appendApplication, findApplications, writeLinkToJobDir } from '../services/applications';
 
 const router = Router();
 
@@ -396,6 +396,30 @@ router.post('/latexFromStructured', async (req, res) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Latex from structured error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
+router.get('/checkDuplicate', (req, res) => {
+  try {
+    const link = typeof req.query.link === 'string' ? req.query.link : undefined;
+    const company = typeof req.query.company === 'string' ? req.query.company : undefined;
+    const role = typeof req.query.role === 'string' ? req.query.role : undefined;
+
+    if (!link?.trim() && !(company?.trim() && role?.trim())) {
+      res.json({ duplicate: false, matchedBy: null, row: null, checked: false });
+      return;
+    }
+
+    const match = findApplications({ link, company, role });
+    if (!match) {
+      res.json({ duplicate: false, matchedBy: null, row: null, checked: true });
+      return;
+    }
+    res.json({ duplicate: true, matchedBy: match.matchedBy, row: match.row, checked: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    logError('Check duplicate error:', err);
     res.status(500).json({ error: message });
   }
 });

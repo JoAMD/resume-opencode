@@ -319,13 +319,60 @@
       }
     }
 
+    // Returns true if the user wants to proceed (no duplicate, or confirmed
+    // a known duplicate). Returns false if the user cancelled.
+    function checkDuplicateAndConfirm(link) {
+      return new Promise(async (resolve) => {
+        const params = new URLSearchParams({ link });
+        const company = document.getElementById('companyName').value.trim();
+        const role = document.getElementById('roleName').value.trim();
+        if (company) params.set('company', company);
+        if (role) params.set('role', role);
+
+        let data;
+        try {
+          const res = await fetch(`/generate/checkDuplicate?${params.toString()}`);
+          data = await res.json();
+        } catch (e) {
+          console.error('checkDuplicate fetch failed', e);
+          resolve(true);
+          return;
+        }
+
+        if (!data.duplicate) {
+          resolve(true);
+          return;
+        }
+
+        const row = data.row || {};
+        const when = row.applied_at || '(unknown)';
+        const who = row.company || company || '';
+        const what = row.role || role || '';
+        const matchedBy = data.matchedBy === 'link' ? 'link' : 'company + role';
+        const msg =
+          `This looks like a job you've already applied to.\n` +
+          `  Matched by: ${matchedBy}\n` +
+          `  Applied at: ${when}\n` +
+          `  Company:   ${who}\n` +
+          `  Role:      ${what}\n` +
+          `Continue generating a new resume?`;
+        resolve(window.confirm(msg));
+      });
+    }
+
     async function generateResume(e, combined) {
       const noJdMode = document.getElementById('noJdMode').checked;
       const jdValue = document.getElementById('jobDescription').value.trim();
+      const linkValue = document.getElementById('link-input').value.trim();
       if (!noJdMode && !jdValue) {
         status.className = 'status error';
         status.textContent = 'Please provide a job description or enable role-title-only mode.';
         return;
+      }
+
+      if (linkValue) {
+        const proceed = await checkDuplicateAndConfirm(linkValue);
+        if (!proceed) return;
       }
 
       const btn = combined ? document.getElementById('submit-btn') : document.getElementById('resume-only-btn');
