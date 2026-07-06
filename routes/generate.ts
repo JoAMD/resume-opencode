@@ -10,6 +10,7 @@ import { buildLatex, buildCoverLetterLatex } from '../services/latex';
 import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
+import { appendApplication, writeLinkToJobDir } from '../services/applications';
 
 const router = Router();
 
@@ -27,6 +28,7 @@ type GenerateRequestBody = {
   fullJD?: string;
   companyName?: string;
   roleName?: string;
+  link?: string;
   extraNotes?: string;
   generateWithoutJD?: boolean;
   coverOutput?: 'pdf' | 'txt' | 'none';
@@ -136,6 +138,8 @@ function formatOtherInput(body: GenerateRequestBody): string {
   lines.push('');
   lines.push(`Role / Title: ${body.roleName ?? ''}`);
   lines.push('');
+  lines.push(`Job posting link: ${body.link ?? ''}`);
+  lines.push('');
   lines.push('Job Description:');
   lines.push(body.jobDescription ? '(see job-description.txt)' : '(empty)');
   lines.push('');
@@ -244,6 +248,9 @@ router.post('/', async (req, res) => {
       saveJobFile(jobDir.jobDir, 'full-jd.txt', body.fullJD);
     }
     saveJobFile(jobDir.jobDir, 'other-input.txt', formatOtherInput(body));
+    if (body.link?.trim()) {
+      writeLinkToJobDir(jobDir.jobDir, body.link.trim());
+    }
     const taskId = createTaskId();
     taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
     res.json({ taskId, jobDir: jobDir.slug });
@@ -395,7 +402,14 @@ router.post('/latexFromStructured', async (req, res) => {
 
 router.post('/markApplied', async (req, res) => {
   try {
-    const { folderPath, taskId } = req.body as { folderPath?: string; taskId?: string };
+    const { folderPath, taskId, company, role, link, job_dir } = req.body as {
+      folderPath?: string;
+      taskId?: string;
+      company?: string;
+      role?: string;
+      link?: string;
+      job_dir?: string;
+    };
     log(`markApplied called: folderPath="${folderPath}", taskId="${taskId}"`);
 
     const targetDir = resolveTargetDir({ folderPath, taskId, lastTexPath: lastGeneratedTexPath });
@@ -417,8 +431,24 @@ router.post('/markApplied', async (req, res) => {
       return;
     }
 
-    log(`Marked folder as applied: ${folderName} -> ${path.basename(newDir)}`);
-    res.json({ success: true, oldPath: targetDir, newPath: newDir });
+    const csvResult = appendApplication({
+      company: company ?? '',
+      role: role ?? '',
+      link: link ?? '',
+      job_dir: job_dir ?? path.basename(newDir),
+    });
+
+    log(
+      `Marked folder as applied: ${folderName} -> ${path.basename(newDir)}` +
+        ` (csvAppended=${csvResult.appended}${csvResult.reason ? `, reason=${csvResult.reason}` : ''})`
+    );
+    res.json({
+      success: true,
+      oldPath: targetDir,
+      newPath: newDir,
+      csvAppended: csvResult.appended,
+      csvSkippedReason: csvResult.appended ? null : csvResult.reason,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Mark applied error:', err);
