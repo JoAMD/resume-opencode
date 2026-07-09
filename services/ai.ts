@@ -851,7 +851,7 @@ async function executeOpencodePrompt(client: any, sessionId: string, promptBody:
   }
 }
 
-function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
+export function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult> {
   return new Promise(async (resolve, reject) => {
     const { systemPrompt, userContent, model, promptLogDir, jsonSchema } = opts;
     const logDir = promptLogDir || '/tmp';

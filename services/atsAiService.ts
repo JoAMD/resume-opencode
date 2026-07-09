@@ -3,7 +3,13 @@ import path from 'path';
 import { findProjectRoot } from './paths';
 import { loadEnv } from './loadEnv';
 import { ATSAnalysisResult, ResumeData } from './types';
-import { analyzeATSKeywordsAgainstResume, extractATSKeywordsFromJDViaAI, sanitizeJobDescription } from './ai';
+import {
+  analyzeATSKeywordsAgainstResume,
+  enqueueAIRequest,
+  extractATSKeywordsFromJDViaAI,
+  runOpenCode,
+  sanitizeJobDescription,
+} from './ai';
 import {
   ensureRedactedResumeFile,
   isRedactedResume,
@@ -38,9 +44,8 @@ const ATS_ANALYSIS_PROMPT = (() => {
   }
 })();
 
-const ATS_ANALYSIS_MODEL = process.env.OPENCODE_ATS_ANALYSIS_MODEL || 'openai/gpt-4o';
+const ATS_ANALYSIS_MODEL = process.env.OPENCODE_ATS_ANALYSIS_MODEL || process.env.OPENCODE_MODEL || 'opencode-go/minimax-m3';
 const ATS_AI_ENABLED = (process.env.OPENCODE_ATS_AI ?? 'true').toLowerCase() !== 'false';
-const ATS_AI_TIMEOUT_MS = Math.max(1000, parseInt(process.env.OPENCODE_ATS_AI_TIMEOUT_MS || '120000', 10) || 120000);
 
 const ATS_ANALYSIS_JSON_SCHEMA = {
   type: 'object',
@@ -66,26 +71,13 @@ const ATS_ANALYSIS_JSON_SCHEMA = {
   required: ['includedInResume', 'missingFromResume'],
 };
 
-let opencodeSdk: any = null;
-async function getSdk() {
-  if (!opencodeSdk) {
-    opencodeSdk = await import('@opencode-ai/sdk');
-  }
-  return opencodeSdk;
-}
-
-const OPENCODE_PASSWORD = process.env.OPENCODE_SERVER_PASSWORD || process.env.OPENCODE_PASSWORD || '';
-function getAuthHeader() {
-  const credentials = Buffer.from(`opencode:${OPENCODE_PASSWORD}`).toString('base64');
-  return `Basic ${credentials}`;
-}
-
 export interface ATSAiAnalysisInput {
   jobDescription: string;
   resume: ResumeData;
   jdKeywords?: string[];
   jobDir?: string;
   modelOverride?: string;
+  promptLogDir?: string;
 }
 
 export interface ATSAiAnalysisOutcome {
@@ -186,7 +178,7 @@ interface ParsedAiResponse {
   summaryMarkdown: string;
 }
 
-function parseAiResponse(parsed: any, extractedFromJD: string[]): ParsedAiResponse {
+export function parseAiResponse(parsed: any, extractedFromJD: string[]): ParsedAiResponse {
   const coverage = reconcileKeywordCoverage(parsed, extractedFromJD);
   return {
     ...coverage,
@@ -197,91 +189,21 @@ function parseAiResponse(parsed: any, extractedFromJD: string[]): ParsedAiRespon
   };
 }
 
-interface ModelRequestArgs {
-  model: string;
+export function buildAtsUserContent(args: {
   sanitizedJD: string;
   jdKeywords: string[];
   redactedResume: ResumeData;
-}
-
-function buildModelRequest({ model, sanitizedJD, jdKeywords, redactedResume }: ModelRequestArgs) {
-  const systemPrompt = ATS_ANALYSIS_PROMPT();
-  if (!systemPrompt.trim()) {
-    throw new Error('ats-analysis-prompt.txt is empty or missing');
-  }
-  const userContent = [
+}): string {
+  return [
     'JOB DESCRIPTION:',
-    sanitizedJD,
+    args.sanitizedJD,
     '',
     'ATS KEYWORDS EXTRACTED FROM JD (lowercase, may include multi-word phrases):',
-    JSON.stringify(jdKeywords),
+    JSON.stringify(args.jdKeywords),
     '',
     'REDACTED RESUME (PII stripped: name, phone, email, linkedinUrl, linkedinDisplay, githubUrl, githubDisplay are empty strings):',
-    JSON.stringify(redactedResume, null, 2),
+    JSON.stringify(args.redactedResume, null, 2),
   ].join('\n');
-
-  return {
-    systemPrompt,
-    createArgs: {
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'ats_analysis', schema: ATS_ANALYSIS_JSON_SCHEMA },
-      },
-    },
-  };
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, signal: AbortSignal): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error(`ATS AI call timed out after ${ms}ms`)), ms);
-      signal.addEventListener('abort', () => {
-        clearTimeout(timer);
-        reject(new Error('ATS AI call aborted'));
-      });
-    }),
-  ]);
-}
-
-async function invokeModel(client: any, createArgs: any): Promise<any> {
-  const completion = await client.chat.completions.create(createArgs);
-  return parseModelPayload(completion);
-}
-
-function extractMessageContent(completion: any): string {
-  return completion?.choices?.[0]?.message?.content?.trim?.() ?? '';
-}
-
-function stripCodeFences(text: string): string {
-  return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-}
-
-function parseModelPayload(completion: any): any {
-  const raw = extractMessageContent(completion);
-  if (!raw) throw new Error('ATS AI call returned empty content');
-  const parsed = JSON.parse(stripCodeFences(raw));
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('ATS AI call returned non-object JSON');
-  }
-  return parsed;
-}
-
-async function callAtsAnalysisModel(args: ModelRequestArgs): Promise<any> {
-  const sdk = await getSdk();
-  const client = sdk.createOpencodeClient({
-    serverUrl: process.env.OPENCODE_SERVER_URL || 'https://api.opencode.ai',
-    auth: getAuthHeader(),
-  });
-  const { createArgs } = buildModelRequest(args);
-  const ac = new AbortController();
-  return withTimeout(invokeModel(client, createArgs), ATS_AI_TIMEOUT_MS, ac.signal);
 }
 
 function assertRedactionHolds(redacted: ResumeData, context: string): void {
@@ -348,6 +270,41 @@ function buildRegexFallbackResult(
   };
 }
 
+export async function callAtsAnalysisModel(args: {
+  model: string;
+  sanitizedJD: string;
+  jdKeywords: string[];
+  redactedResume: ResumeData;
+  promptLogDir?: string;
+}): Promise<any> {
+  const systemPrompt = ATS_ANALYSIS_PROMPT();
+  if (!systemPrompt.trim()) {
+    throw new Error('ats-analysis-prompt.txt is empty or missing');
+  }
+  const userContent = buildAtsUserContent({
+    sanitizedJD: args.sanitizedJD,
+    jdKeywords: args.jdKeywords,
+    redactedResume: args.redactedResume,
+  });
+
+  const result = await enqueueAIRequest(args.model, () =>
+    runOpenCode({
+      systemPrompt,
+      userContent,
+      model: args.model,
+      promptLogDir: args.promptLogDir,
+      jsonSchema: ATS_ANALYSIS_JSON_SCHEMA,
+    }),
+  );
+
+  if (!result?.structured || typeof result.structured !== 'object') {
+    throw new Error(
+      `ATS AI call returned no structured response (usedStructuredOutput=${result?.usedStructuredOutput})`,
+    );
+  }
+  return result.structured;
+}
+
 export async function runAtsAiAnalysis(input: ATSAiAnalysisInput): Promise<ATSAiAnalysisOutcome> {
   const sanitizedJD = sanitizeJobDescription(input.jobDescription || '');
   const extractedFromJD = await extractKeywordsFromJD(sanitizedJD, input.jdKeywords);
@@ -370,7 +327,13 @@ export async function runAtsAiAnalysis(input: ATSAiAnalysisInput): Promise<ATSAi
 
   const model = input.modelOverride || ATS_ANALYSIS_MODEL;
   try {
-    const parsed = await callAtsAnalysisModel({ model, sanitizedJD, jdKeywords: extractedFromJD, redactedResume: redacted });
+    const parsed = await callAtsAnalysisModel({
+      model,
+      sanitizedJD,
+      jdKeywords: extractedFromJD,
+      redactedResume: redacted,
+      promptLogDir: input.promptLogDir,
+    });
     return {
       analysis: buildAiAnalysisResult(parsed, extractedFromJD, model, redactedPath),
       source: 'ai',

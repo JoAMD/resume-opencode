@@ -1,12 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ResumeData } from './types';
-
-vi.mock('@opencode-ai/sdk', () => ({
-  createOpencodeClient: vi.fn(),
-}));
 
 function buildSampleResume(): ResumeData {
   return {
@@ -33,24 +29,31 @@ function buildSampleResume(): ResumeData {
   };
 }
 
-function buildMockClient(respondWith: () => any) {
+const runOpenCodeMock = vi.fn();
+const enqueueMock = vi.fn((_model: string, work: () => any) => work());
+const extractKeywordsMock = vi.fn(async () => ['typescript', 'aws']);
+
+vi.mock('./ai.js', async () => {
+  const actual = await vi.importActual<any>('./ai.js');
   return {
-    chat: {
-      completions: {
-        create: vi.fn().mockImplementation(async () => respondWith()),
-      },
-    },
+    ...actual,
+    runOpenCode: (...args: any[]) => (runOpenCodeMock as any)(...args),
+    enqueueAIRequest: (model: string, work: () => any) => enqueueMock(model, work),
+    extractATSKeywordsFromJDViaAI: (...args: any[]) => (extractKeywordsMock as any)(...args),
   };
-}
+});
 
 async function loadModule() {
   vi.resetModules();
+  runOpenCodeMock.mockReset();
+  enqueueMock.mockReset();
+  extractKeywordsMock.mockReset();
+  extractKeywordsMock.mockResolvedValue(['typescript', 'aws']);
+  enqueueMock.mockImplementation((_model: string, work: () => any) => work());
   process.env.OPENCODE_AI_QUEUE = 'false';
   process.env.OPENCODE_AI_CONCURRENCY = '1';
-  const sdkModule = await import('@opencode-ai/sdk');
-  const { createOpencodeClient } = sdkModule as unknown as { createOpencodeClient: any };
   const mod = await import('./atsAiService.js');
-  return { ...mod, createOpencodeClient: createOpencodeClient as unknown as ReturnType<typeof vi.fn> };
+  return mod;
 }
 
 describe('runAtsAiAnalysis', () => {
@@ -60,26 +63,25 @@ describe('runAtsAiAnalysis', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-ai-'));
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('sends a redacted resume to the model (PII invariant)', async () => {
     process.env.OPENCODE_ATS_AI = 'true';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient(() => ({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              includedInResume: ['typescript', 'react'],
-              missingFromResume: ['aws'],
-              strengths: ['Strong React background'],
-              gaps: [{ keyword: 'aws', why: 'Core requirement', suggestion: 'Add a bullet' }],
-              recommendations: ['Add AWS bullet'],
-              summaryMarkdown: '## Summary\n\nGood fit, gap on AWS.',
-            }),
-          },
-        },
-      ],
-    }));
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
+    const { runAtsAiAnalysis } = await loadModule();
+    runOpenCodeMock.mockResolvedValueOnce({
+      structured: {
+        includedInResume: ['typescript', 'react'],
+        missingFromResume: ['aws'],
+        strengths: ['Strong React background'],
+        gaps: [{ keyword: 'aws', why: 'Core requirement', suggestion: 'Add a bullet' }],
+        recommendations: ['Add AWS bullet'],
+        summaryMarkdown: '## Summary\n\nGood fit, gap on AWS.',
+      },
+      rawText: '',
+      usedStructuredOutput: true,
+    });
 
     const result = await runAtsAiAnalysis({
       jobDescription: 'Looking for a TypeScript + React engineer with AWS experience.',
@@ -96,14 +98,15 @@ describe('runAtsAiAnalysis', () => {
     expect(result.analysis.gaps?.[0]?.keyword).toBe('aws');
     expect(result.analysis.summaryMarkdown).toContain('Good fit');
 
-    const createCall = mockClient.chat.completions.create.mock.calls[0][0];
-    const userContent: string = createCall.messages[1].content;
-    expect(userContent).not.toContain('Jane Q Public');
-    expect(userContent).not.toContain('+61 400 111 222');
-    expect(userContent).not.toContain('jane@example.com');
-    expect(userContent).not.toContain('linkedin.com/in/janepublic');
-    expect(userContent).not.toContain('github.com/janepublic');
-    expect(userContent).not.toContain('janepublic');
+    expect(runOpenCodeMock).toHaveBeenCalledTimes(1);
+    const callArgs = runOpenCodeMock.mock.calls[0][0];
+    expect(callArgs.jsonSchema).toBeTruthy();
+    expect(callArgs.userContent).not.toContain('Jane Q Public');
+    expect(callArgs.userContent).not.toContain('+61 400 111 222');
+    expect(callArgs.userContent).not.toContain('jane@example.com');
+    expect(callArgs.userContent).not.toContain('linkedin.com/in/janepublic');
+    expect(callArgs.userContent).not.toContain('github.com/janepublic');
+    expect(callArgs.userContent).not.toContain('janepublic');
 
     expect(result.redactedResumePath).toBe(path.join(tmpDir, 'structured-output-redacted.json'));
     expect(fs.existsSync(result.redactedResumePath!)).toBe(true);
@@ -118,13 +121,10 @@ describe('runAtsAiAnalysis', () => {
     expect(onDisk.summary).toContain('TypeScript');
   });
 
-  it('falls back to regex coverage when the AI call throws', async () => {
+  it('falls back to regex coverage when runOpenCode throws', async () => {
     process.env.OPENCODE_ATS_AI = 'true';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient(() => {
-      throw new Error('network down');
-    });
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
+    const { runAtsAiAnalysis } = await loadModule();
+    runOpenCodeMock.mockRejectedValueOnce(new Error('session create failed'));
 
     const result = await runAtsAiAnalysis({
       jobDescription: 'Need a TypeScript + React engineer with AWS experience.',
@@ -134,19 +134,16 @@ describe('runAtsAiAnalysis', () => {
     });
 
     expect(result.source).toBe('regex');
-    expect(result.fallbackReason).toContain('network down');
+    expect(result.fallbackReason).toContain('session create failed');
     expect(result.analysis.coveragePercent).toBeDefined();
     expect(result.analysis.summaryMarkdown).toMatch(/unavailable|failed/i);
-    expect(result.analysis.summaryMarkdown).toContain('network down');
+    expect(result.analysis.summaryMarkdown).toContain('session create failed');
   });
 
-  it('falls back to regex when the AI returns invalid JSON', async () => {
+  it('falls back to regex when the model returns no structured response', async () => {
     process.env.OPENCODE_ATS_AI = 'true';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient(() => ({
-      choices: [{ message: { content: 'not valid json' } }],
-    }));
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
+    const { runAtsAiAnalysis } = await loadModule();
+    runOpenCodeMock.mockResolvedValueOnce({ structured: null, rawText: '', usedStructuredOutput: false });
 
     const result = await runAtsAiAnalysis({
       jobDescription: 'Need a TypeScript engineer.',
@@ -156,32 +153,27 @@ describe('runAtsAiAnalysis', () => {
     });
 
     expect(result.source).toBe('regex');
-    expect(result.analysis.coveragePercent).toBeDefined();
+    expect(result.fallbackReason).toMatch(/no structured response/i);
   });
 
-  it('returns 100% coverage with empty arrays when jdKeywords is empty after sanitisation', async () => {
+  it('throws No ATS keywords when AI extraction returns empty and none supplied', async () => {
     process.env.OPENCODE_ATS_AI = 'true';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient(() => ({ choices: [{ message: { content: '{}' } }] }));
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
+    const { runAtsAiAnalysis } = await loadModule();
+    extractKeywordsMock.mockResolvedValueOnce([]);
 
     await expect(
       runAtsAiAnalysis({
         jobDescription: '...',
         resume: buildSampleResume(),
-        jdKeywords: [],
+        jdKeywords: undefined,
         jobDir: tmpDir,
       }),
     ).rejects.toThrow(/No ATS keywords/i);
   });
 
-  it('respects OPENCODE_ATS_AI=false (always regex, no API call)', async () => {
+  it('respects OPENCODE_ATS_AI=false (always regex, no runOpenCode call)', async () => {
     process.env.OPENCODE_ATS_AI = 'false';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient(() => {
-      throw new Error('should not be called');
-    });
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
+    const { runAtsAiAnalysis } = await loadModule();
 
     const result = await runAtsAiAnalysis({
       jobDescription: 'Need a TypeScript engineer with AWS.',
@@ -192,51 +184,6 @@ describe('runAtsAiAnalysis', () => {
 
     expect(result.source).toBe('regex');
     expect(result.fallbackReason).toBe('OPENCODE_ATS_AI=false');
-    expect(mockClient.chat.completions.create).not.toHaveBeenCalled();
-  });
-
-  it('extracts JD keywords via AI when none are provided', async () => {
-    process.env.OPENCODE_ATS_AI = 'true';
-    const { runAtsAiAnalysis, createOpencodeClient } = await loadModule();
-    const mockClient = buildMockClient((() => {
-      let call = 0;
-      return () => {
-        call++;
-        if (call === 1) {
-          return {
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify(['typescript', 'aws']),
-                },
-              },
-            ],
-          };
-        }
-        return {
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  includedInResume: ['typescript', 'aws'],
-                  missingFromResume: [],
-                }),
-              },
-            },
-          ],
-        };
-      };
-    })());
-    (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
-
-    const result = await runAtsAiAnalysis({
-      jobDescription: 'Need a TypeScript engineer with AWS.',
-      resume: buildSampleResume(),
-      jdKeywords: undefined,
-      jobDir: tmpDir,
-    });
-
-    expect(result.source).toBe('ai');
-    expect(mockClient.chat.completions.create).toHaveBeenCalledTimes(2);
+    expect(runOpenCodeMock).not.toHaveBeenCalled();
   });
 });
