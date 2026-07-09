@@ -9,6 +9,7 @@ const PROMPT_FILES = [
   'cover-letter-star-system-prompt.txt',
   'cover-letter-system-prompt.txt',
   'ats-keyword-extraction-prompt.txt',
+  'ats-analysis-prompt.txt',
   'govt-star-method-prompt.txt',
   'trim-resume-prompt.txt',
 ];

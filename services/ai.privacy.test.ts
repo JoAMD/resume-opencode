@@ -156,3 +156,31 @@ describe('Privacy helpers', () => {
     });
   });
 });
+
+import { redactResumeForExternalModel, PII_FIELDS } from './redactResume';
+
+describe('ATS AI redaction guard', () => {
+  it('redactResumeForExternalModel never leaves any PII field non-empty', () => {
+    const dirty: ResumeData = {
+      name: 'John Q Public',
+      phone: '0400000000',
+      email: 'john@example.com',
+      linkedinUrl: 'https://linkedin.com/in/john',
+      linkedinDisplay: 'linkedin.com/in/john',
+      githubUrl: 'https://github.com/john',
+      githubDisplay: 'github.com/john',
+      summary: 'Engineer',
+      skills: { languages: 'TS', frameworks: '', tools: '', libraries: '' },
+      experience: [],
+      education: [],
+      projects: [],
+    };
+
+    const redacted = redactResumeForExternalModel(dirty);
+
+    for (const field of PII_FIELDS) {
+      const value = (redacted as unknown as Record<string, unknown>)[field];
+      expect(value, `field ${field} should be empty`).toBe('');
+    }
+  });
+});

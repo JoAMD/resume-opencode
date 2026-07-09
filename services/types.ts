@@ -42,3 +42,24 @@ export type ResumeData = {
   atsKeywords?: string[];
   characterCountTrimmed?: string;
 };
+
+export type ATSAnalysisGap = {
+  keyword: string;
+  why: string;
+  suggestion: string;
+};
+
+export type ATSAnalysisResult = {
+  extractedFromJD: string[];
+  includedInResume: string[];
+  missingFromResume: string[];
+  coveragePercent: number;
+  source?: 'ai' | 'regex';
+  model?: string;
+  strengths?: string[];
+  gaps?: ATSAnalysisGap[];
+  recommendations?: string[];
+  summaryMarkdown?: string;
+  redactedResumePath?: string;
+  error?: string;
+};
