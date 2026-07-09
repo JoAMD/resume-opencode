@@ -78,7 +78,7 @@ const AI_QUEUE_ENABLED = (process.env.OPENCODE_AI_QUEUE ?? 'true').toLowerCase()
 const AI_PROMPT_TIMEOUT_MS = Math.max(1000, parseInt(process.env.OPENCODE_AI_PROMPT_TIMEOUT_MS || '600000', 10) || 600000);
 const OPENCODE_KEEP_SESSION = (process.env.OPENCODE_KEEP_SESSION ?? 'true').toLowerCase() !== 'false';
 
-export const RESUME_CHAR_LIMIT = 7784;
+export const RESUME_CHAR_LIMIT = 77840; //7784
 
 export function getResumeCharCount(resume: ResumeData | undefined | null): number {
   if (!resume) return 0;
