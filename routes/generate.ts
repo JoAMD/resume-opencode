@@ -31,7 +31,7 @@ type GenerateRequestBody = {
   link?: string;
   extraNotes?: string;
   generateWithoutJD?: boolean;
-  coverOutput?: 'pdf' | 'txt' | 'none';
+  coverOutput?: 'pdf' | 'txt' | 'both' | 'none';
   lowTokenMode?: boolean;
   modelSelect?: string;
   modelPreference?: string;
@@ -126,6 +126,7 @@ const MODEL_PREFERENCE_LABELS: Record<string, string> = {
 };
 
 const COVER_OUTPUT_LABELS: Record<string, string> = {
+  both: 'TXT + PDF (also saves LaTeX)',
   pdf: 'PDF (also saves LaTeX)',
   txt: 'TXT only',
   none: 'None',
@@ -343,15 +344,8 @@ router.post('/coverLetter', async (req, res) => {
     saveJobFile(jobDir, 'cover-letter.tex', latexSource);
 
     const effectiveCoverOutput = resolveCoverOutput(coverOutput);
-    if (effectiveCoverOutput === 'txt') {
-      const txtContent = formatCoverLetterText(coverLetterJSON);
-      saveJobFile(jobDir, 'cover-letter.txt', txtContent);
-      res.json({ txtUrl: `/jobs/${path.basename(jobDir)}/cover-letter.txt`, sessionId });
-    } else {
-      const pdfBuffer = await compilePDF(latexSource);
-      saveJobFile(jobDir, 'cover-letter.pdf', pdfBuffer);
-      res.json({ pdfUrl: `/jobs/${path.basename(jobDir)}/cover-letter.pdf`, sessionId });
-    }
+    const coverUrls = await writeCoverLetterArtifacts(jobDir, coverLetterJSON, latexSource, effectiveCoverOutput);
+    res.json({ sessionId, ...coverUrls });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Cover letter error:', err);
@@ -574,11 +568,33 @@ function createJobDir(companyName: string, roleName: string, model?: string): { 
   return { jobDir, slug };
 }
 
-function resolveCoverOutput(coverOutput: 'pdf' | 'txt' | 'none' | '' | undefined): 'pdf' | 'txt' | 'none' {
-  if (coverOutput === 'pdf' || coverOutput === 'txt' || coverOutput === 'none') {
+function resolveCoverOutput(coverOutput: 'pdf' | 'txt' | 'both' | 'none' | '' | undefined): 'pdf' | 'txt' | 'both' | 'none' {
+  if (coverOutput === 'pdf' || coverOutput === 'txt' || coverOutput === 'both' || coverOutput === 'none') {
     return coverOutput;
   }
-  return 'pdf';
+  return 'both';
+}
+
+type CoverArtifactUrls = { coverTxtUrl?: string; coverPdfUrl?: string };
+
+async function writeCoverLetterArtifacts(
+  jobDir: string,
+  coverLetterJSON: CoverLetterJSON,
+  coverLatex: string,
+  coverOutput: 'pdf' | 'txt' | 'both' | 'none'
+): Promise<CoverArtifactUrls> {
+  const urls: CoverArtifactUrls = {};
+  if (coverOutput === 'txt' || coverOutput === 'both') {
+    const txtContent = formatCoverLetterText(coverLetterJSON);
+    saveJobFile(jobDir, 'cover-letter.txt', txtContent);
+    urls.coverTxtUrl = `/jobs/${path.basename(jobDir)}/cover-letter.txt`;
+  }
+  if (coverOutput === 'pdf' || coverOutput === 'both') {
+    const pdfBuffer = await compilePDF(coverLatex);
+    saveJobFile(jobDir, 'cover-letter.pdf', pdfBuffer);
+    urls.coverPdfUrl = `/jobs/${path.basename(jobDir)}/cover-letter.pdf`;
+  }
+  return urls;
 }
 
 function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
@@ -595,7 +611,7 @@ function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
 async function executeGeneration(
   jobDir: { jobDir: string; slug: string },
   options: ReturnType<typeof buildGenerationOptions>,
-  input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string; coverOutput?: 'pdf' | 'txt' | 'none' | ''; useCombinedGeneration?: boolean }
+  input: { jobDescription?: string; companyName?: string; roleName?: string; extraNotes?: string;   coverOutput?: 'pdf' | 'txt' | 'both' | 'none' | ''; useCombinedGeneration?: boolean }
 ): Promise<{ result: Record<string, unknown>; sessionId: string; coverLetterSessionId?: string }> {
   const { jobDescription, companyName, roleName, extraNotes, useCombinedGeneration } = input;
   const coverOutput = resolveCoverOutput(input.coverOutput);
@@ -650,15 +666,8 @@ async function executeGeneration(
     const coverLatex = buildCoverLetterLatex(coverLetterJSON);
     saveJobFile(jobDir.jobDir, 'cover-letter.tex', coverLatex);
 
-    if (coverOutput === 'txt') {
-      const txtContent = formatCoverLetterText(coverLetterJSON);
-      saveJobFile(jobDir.jobDir, 'cover-letter.txt', txtContent);
-      result.coverTxtUrl = `/jobs/${jobDir.slug}/cover-letter.txt`;
-    } else if (coverOutput === 'pdf') {
-      const coverPdfBuffer = await compilePDF(coverLatex);
-      saveJobFile(jobDir.jobDir, 'cover-letter.pdf', coverPdfBuffer);
-      result.coverPdfUrl = `/jobs/${jobDir.slug}/cover-letter.pdf`;
-    }
+    const coverUrls = await writeCoverLetterArtifacts(jobDir.jobDir, coverLetterJSON, coverLatex, coverOutput);
+    Object.assign(result, coverUrls);
   }
 
   if (atsKeywords.length > 0) {

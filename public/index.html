@@ -92,7 +92,8 @@
     <div class="field">
       <label for="cover-output">Cover Letter Output</label>
       <select id="cover-output">
-        <option value="pdf" selected>PDF (also saves LaTeX)</option>
+        <option value="both" selected>TXT + PDF (also saves LaTeX)</option>
+        <option value="pdf">PDF (also saves LaTeX)</option>
         <option value="txt">TXT only</option>
       </select>
     </div>
@@ -364,7 +365,7 @@
         modelPreference: document.getElementById('modelPreference').value,
         lowTokenMode: document.getElementById('lowTokenMode').checked,
         useCombinedGeneration: combined,
-        coverOutput: document.getElementById('cover-output')?.value || 'pdf',
+        coverOutput: document.getElementById('cover-output')?.value || 'both',
         modelSelect: document.getElementById('model-select')?.value,
         useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
         resumeType: document.getElementById('resumeType').value,
@@ -450,7 +451,7 @@
     document.getElementById('generate-cover-letter-btn').addEventListener('click', async () => {
       try {
         const jobDescription = document.getElementById('jobDescription').value.trim();
-        const coverOutput = document.getElementById('cover-output')?.value || 'pdf';
+        const coverOutput = document.getElementById('cover-output')?.value || 'both';
         const modelSelect = document.getElementById('model-select')?.value;
         const useStarMethodForGovtRoles = document.getElementById('useStarMethodForGovtRoles').checked;
         const folderPath = document.getElementById('folderPath').value.trim();
