@@ -671,10 +671,30 @@ async function executeGeneration(
   }
 
   if (atsKeywords.length > 0) {
-    const atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON);
+    const { runAtsAiAnalysis, buildAtsAnalysisMarkdown } = await import('../services/atsAiService.js');
+    let atsResult: { coveragePercent: number };
+    let atsAnalysis: import('../services/types').ATSAnalysisResult | null = null;
+    try {
+      const outcome = await runAtsAiAnalysis({
+        jobDescription: jobDescription ?? '',
+        resume: resumeJSON,
+        jdKeywords: atsKeywords,
+        jobDir: jobDir.jobDir,
+      });
+      atsResult = { coveragePercent: outcome.analysis.coveragePercent };
+      atsAnalysis = outcome.analysis;
+    } catch (err) {
+      logError('Post-generation ATS AI error, falling back to regex:', err);
+      const fallback = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON);
+      atsResult = { coveragePercent: fallback.coveragePercent };
+      atsAnalysis = { ...fallback, source: 'regex' };
+    }
     result.atsCoverage = atsResult.coveragePercent;
     result.atsKeywords = atsKeywords;
-    saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(atsResult, null, 2));
+    if (atsAnalysis) {
+      saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(atsAnalysis, null, 2));
+      saveJobFile(jobDir.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(atsAnalysis));
+    }
     log(`ATS analysis: ${atsResult.coveragePercent}% coverage, ${atsKeywords.length} keywords`);
   }
 
@@ -846,64 +866,18 @@ interface ExecuteATSAnalysisInput {
 }
 
 async function executeATSAnalysis(input: ExecuteATSAnalysisInput): Promise<{ analysis: ATSAnalysisResult | null; error?: string }> {
-  let targetResume: ResumeData | undefined;
-  let targetJobDescription = input.jobDescription;
-  let extractedAtsKeywords: string[] | undefined;
-
-  if (input.folderPath?.trim()) {
-    const resolved = resolveJobDir(input.folderPath);
-
-    const resumePath = path.join(resolved, 'structured-output.json');
-    if (fs.existsSync(resumePath)) {
-      const resumeData = fs.readFileSync(resumePath, 'utf8');
-      targetResume = JSON.parse(resumeData);
-      extractedAtsKeywords = (targetResume as any).atsKeywords;
-    }
-
-    const atsPath = path.join(resolved, 'ats-analysis.json');
-    if (fs.existsSync(atsPath)) {
-      const atsData = JSON.parse(fs.readFileSync(atsPath, 'utf8'));
-      if (!extractedAtsKeywords?.length && atsData.extractedFromJD?.length) {
-        extractedAtsKeywords = atsData.extractedFromJD;
-      }
-    }
-
-    const jdPath = path.join(resolved, 'job-description.txt');
-    if (fs.existsSync(jdPath)) {
-      targetJobDescription = fs.readFileSync(jdPath, 'utf8');
-    }
-  } else {
-    targetResume = input.resumeJSON ?? input.lastGeneratedResumeJSON;
+  const { runATSAnalysis } = await import('../services/atsService.js');
+  const outcome = await runATSAnalysis({
+    folderPath: input.folderPath,
+    resumeJSON: input.resumeJSON,
+    jobDescription: input.jobDescription,
+    atsKeywordsFromAI: input.atsKeywordsFromAI,
+    lastGeneratedResumeJSON: input.lastGeneratedResumeJSON,
+  });
+  if (outcome.error) {
+    return { analysis: null, error: outcome.error };
   }
-
-  if (!targetResume) {
-    return { analysis: null, error: 'No resume JSON available. Provide folderPath with structured-output.json, or resumeJSON, or generate a resume first.' };
-  }
-
-  let atsKeywords: string[] = [];
-
-  if (input.atsKeywordsFromAI && input.atsKeywordsFromAI.length > 0) {
-    atsKeywords = input.atsKeywordsFromAI;
-  } else if (extractedAtsKeywords?.length) {
-    atsKeywords = extractedAtsKeywords;
-  } else if (targetJobDescription?.trim()) {
-    atsKeywords = await extractATSKeywordsFromJDViaAI(targetJobDescription);
-  } else {
-    return { analysis: null, error: 'No job description available. Provide atsKeywordsFromAI or ensure job-description.txt exists in folderPath.' };
-  }
-
-  if (!atsKeywords.length) {
-    return { analysis: { coveragePercent: 0, extractedFromJD: [], includedInResume: [], missingFromResume: [] } };
-  }
-
-  const atsResult = analyzeATSKeywordsAgainstResume(atsKeywords, targetResume);
-
-  if (input.folderPath?.trim()) {
-    const resolved = resolveJobDir(input.folderPath);
-    saveJobFile(resolved, 'ats-analysis.json', JSON.stringify(atsResult, null, 2));
-  }
-
-  return { analysis: atsResult };
+  return { analysis: outcome.result };
 }
 
 if ((process.env.ENABLE_DEBUG_ROUTES ?? '').toLowerCase() === 'true') {
