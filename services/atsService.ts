@@ -11,6 +11,7 @@ export interface ATSAnalysisInput {
   jobDescription?: string;
   atsKeywordsFromAI?: string[];
   lastGeneratedResumeJSON?: ResumeData | null;
+  modelSelect?: string;
 }
 
 export interface ATSAnalysisOutput {
@@ -102,6 +103,7 @@ async function runAiWithRegexFallback(args: {
   resume: ResumeData;
   jdKeywords: string[];
   resolvedPath: string | undefined;
+  modelSelect?: string;
 }): Promise<ATSAnalysisResult> {
   try {
     const outcome = await runAtsAiAnalysis({
@@ -109,6 +111,7 @@ async function runAiWithRegexFallback(args: {
       resume: args.resume,
       jdKeywords: args.jdKeywords,
       jobDir: args.resolvedPath,
+      modelOverride: args.modelSelect,
     });
     return outcome.analysis;
   } catch (err) {
@@ -163,6 +166,7 @@ export async function runATSAnalysis(input: ATSAnalysisInput): Promise<ATSAnalys
     resume: targetResume,
     jdKeywords: atsKeywords,
     resolvedPath: folderCtx?.resolvedPath,
+    modelSelect: input.modelSelect,
   });
 
   persistAnalysis(folderCtx?.resolvedPath, analysis);

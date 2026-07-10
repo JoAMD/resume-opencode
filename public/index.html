@@ -596,7 +596,10 @@
         const res = await fetch('/generate/runATSAnalysis', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderPath }),
+          body: JSON.stringify({
+            folderPath,
+            modelSelect: document.getElementById('model-select')?.value,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error');

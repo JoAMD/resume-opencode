@@ -517,11 +517,12 @@ router.post('/markApplied', async (req, res) => {
 
 router.post('/runATSAnalysis', async (req, res) => {
   try {
-    const { jobDescription, resumeJSON, atsKeywordsFromAI, folderPath } = req.body as {
+    const { jobDescription, resumeJSON, atsKeywordsFromAI, folderPath, modelSelect } = req.body as {
       jobDescription?: string;
       resumeJSON?: ResumeData;
       atsKeywordsFromAI?: string[];
       folderPath?: string;
+      modelSelect?: string;
     };
 
     const result = await executeATSAnalysis({
@@ -530,6 +531,7 @@ router.post('/runATSAnalysis', async (req, res) => {
       jobDescription,
       atsKeywordsFromAI,
       lastGeneratedResumeJSON,
+      modelSelect,
     });
 
     if (result.error) {
@@ -680,6 +682,7 @@ async function executeGeneration(
         resume: resumeJSON,
         jdKeywords: atsKeywords,
         jobDir: jobDir.jobDir,
+        modelOverride: options.modelSelect,
       });
       atsResult = { coveragePercent: outcome.analysis.coveragePercent };
       atsAnalysis = outcome.analysis;
@@ -863,6 +866,7 @@ interface ExecuteATSAnalysisInput {
   jobDescription?: string;
   atsKeywordsFromAI?: string[];
   lastGeneratedResumeJSON: ResumeData | null;
+  modelSelect?: string;
 }
 
 async function executeATSAnalysis(input: ExecuteATSAnalysisInput): Promise<{ analysis: ATSAnalysisResult | null; error?: string }> {
@@ -873,6 +877,7 @@ async function executeATSAnalysis(input: ExecuteATSAnalysisInput): Promise<{ ana
     jobDescription: input.jobDescription,
     atsKeywordsFromAI: input.atsKeywordsFromAI,
     lastGeneratedResumeJSON: input.lastGeneratedResumeJSON,
+    modelSelect: input.modelSelect,
   });
   if (outcome.error) {
     return { analysis: null, error: outcome.error };

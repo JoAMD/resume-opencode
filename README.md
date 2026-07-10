@@ -56,7 +56,7 @@ Models that don't support structured output write JSON to a file; server polls f
 
 Two flavours of coverage check, both routed through the same per-model AI queue:
 
-- **AI analysis** (`services/atsAiService.ts`) — semantically judges whether each JD keyword is actually present in the resume. Returns `includedInResume`, `missingFromResume`, `strengths`, `gaps[]` (with `why` + `suggestion`), `recommendations`, and a `summaryMarkdown`. Falls back to regex coverage if the call throws, returns a non-object, or `OPENCODE_ATS_AI=false` is set. Result is rendered to `ats-analysis.md` next to the resume.
+- **AI analysis** (`services/atsAiService.ts`) — semantically judges whether each JD keyword is actually present in the resume. Returns `includedInResume`, `missingFromResume`, `strengths`, `gaps[]` (with `why` + `suggestion`), `recommendations`, and a `summaryMarkdown`. Falls back to regex coverage if the call throws, returns a non-object, or `OPENCODE_ATS_AI=false` is set. Result is rendered to `ats-analysis.md` next to the resume. The model used is the one selected in the UI's **Model** dropdown (`modelSelect` from the request body), falling back to `OPENCODE_ATS_ANALYSIS_MODEL` → `OPENCODE_MODEL` → `opencode-go/minimax-m3`. This applies to both the post-generation analysis and the standalone `Run ATS Analysis` button.
 - **Regex analysis** (`analyzeATSKeywordsAgainstResume`) — fast string-match coverage used as the default fallback.
 
 ### PII redaction for AI ATS calls

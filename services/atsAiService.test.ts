@@ -186,4 +186,33 @@ describe('runAtsAiAnalysis', () => {
     expect(result.fallbackReason).toBe('OPENCODE_ATS_AI=false');
     expect(runOpenCodeMock).not.toHaveBeenCalled();
   });
+
+  it('uses modelOverride for the AI call and reports it back on the outcome', async () => {
+    process.env.OPENCODE_ATS_AI = 'true';
+    delete process.env.OPENCODE_ATS_ANALYSIS_MODEL;
+    const { runAtsAiAnalysis } = await loadModule();
+    runOpenCodeMock.mockResolvedValueOnce({
+      structured: {
+        includedInResume: ['typescript'],
+        missingFromResume: ['aws'],
+      },
+      rawText: '',
+      usedStructuredOutput: true,
+    });
+
+    const result = await runAtsAiAnalysis({
+      jobDescription: 'Need a TypeScript engineer with AWS.',
+      resume: buildSampleResume(),
+      jdKeywords: ['typescript', 'aws'],
+      jobDir: tmpDir,
+      modelOverride: 'opencode-go/minimax-m2.5',
+    });
+
+    expect(result.source).toBe('ai');
+    expect(result.modelUsed).toBe('opencode-go/minimax-m2.5');
+    expect(result.analysis.model).toBe('opencode-go/minimax-m2.5');
+    expect(enqueueMock).toHaveBeenCalledWith('opencode-go/minimax-m2.5', expect.any(Function));
+    const callArgs = runOpenCodeMock.mock.calls[0][0];
+    expect(callArgs.model).toBe('opencode-go/minimax-m2.5');
+  });
 });

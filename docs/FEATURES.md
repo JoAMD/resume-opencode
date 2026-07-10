@@ -37,6 +37,12 @@ understand the current surface without reading the source or the git log.
     `ats-analysis.md`.
   - **Regex** (`analyzeATSKeywordsAgainstResume`) — fast keyword-string match;
     the default fallback path.
+- The model used for AI ATS analysis honours the **Model** dropdown in the UI
+  (`modelSelect` from the request body). When the request omits it, the
+  server falls back to `OPENCODE_ATS_ANALYSIS_MODEL` → `OPENCODE_MODEL` →
+  `opencode-go/minimax-m3`. This applies both to the post-generation analysis
+  and to the standalone `POST /generate/runATSAnalysis` route, so picking a
+  model in the UI and then clicking **Run ATS Analysis** uses that same model.
 
 ## PII redaction (for AI ATS analysis)
 
