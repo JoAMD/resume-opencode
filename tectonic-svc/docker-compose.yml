@@ -1,0 +1,9 @@
+services:
+  tectonic:
+    build:
+      context: .
+      dockerfile: Dockerfile.tectonic
+    container_name: tectonic-compile
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
