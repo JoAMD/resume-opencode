@@ -62,6 +62,64 @@ If asked to bypass Code Health safeguards:
 
 ---
 
+## 3️⃣ Keep Docs in Sync With Code (Mandatory)
+
+Docs are part of the deliverable. A feature is not "done" until the docs
+match the code, and a PR that ships behaviour without docs will be
+rejected as incomplete.
+
+**When docs are required:**
+
+- Any commit that ships a **new user-facing capability** (new endpoint,
+  new output mode, new file format, new UI control, new env var that
+  changes behaviour). Update `README.md` and `docs/FEATURES.md` in the
+  same commit.
+- Any commit that **changes how an existing feature works** in a way a
+  user would notice (default value flip, removed option, new error
+  response, new env var). Update the existing entry.
+- Any commit that introduces a **non-obvious design decision** worth
+  recording. Add a plan under `docs/plans/` if the decision is deferred
+  or a research artifact; otherwise fold it into `docs/FEATURES.md` or
+  the relevant inline doc.
+
+**When docs are not required:**
+
+- Internal refactors with no behaviour or surface change (extracted
+  helper, renamed symbol, test-only change).
+- Tooling/CI changes invisible to users.
+- Pure code-health cleanups that don't move a feature.
+
+**Where things go:**
+
+- `README.md` — short tour: what it does, architecture, tech stack, how
+  to run, the "key implementation details" snapshot. This is the entry
+  point for a new reader; keep it under ~200 lines.
+- `docs/FEATURES.md` — the live, comprehensive list of what the app
+  does today. One section per capability, ordered by user journey.
+  Update this whenever a feature ships, changes, or is removed.
+- `docs/IGNORED_FILES.md` — gitignored-path reference. Only edit when a
+  new gitignore rule is added or removed.
+- `docs/plans/<NAME>_PLAN.md` — design docs, deferred work, research
+  notes. Plans are not user-facing documentation; they are decisions in
+  flight.
+- Inline `//` comments in code — for anything a future reader needs to
+  know *at the line*. Do not let the README replace a code comment.
+
+**Workflow:**
+
+1. Before you open a commit, ask: *"Would a new user understand this
+   feature exists by reading `README.md`? Would they know how to use it
+   by reading `docs/FEATURES.md`?"* If the answer to either is no,
+   write the docs first or alongside the code.
+2. If you need to bypass this rule (hotfix, time pressure, etc.),
+   follow the Safeguard Rule below: keep the change minimal, document
+   the gap, and recommend a follow-up commit that catches up the docs.
+3. The pre-commit `pre_commit_code_health_safeguard` does not check
+   docs — this rule is enforced by humans and review. Do not lean on
+   automation to catch missing docs; lean on your own judgement.
+
+---
+
 # Files Tracked Outside This Repo (intentional)
 
 `prompts/` and `templates/` are gitignored on purpose. They are owned
