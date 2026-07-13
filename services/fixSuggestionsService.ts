@@ -5,6 +5,7 @@ import { ResumeData } from './types';
 import { buildLatex } from './latex';
 import { compilePDF } from './compiler';
 import { createVersionedBackup, BackupResult } from './backupService';
+import { ensureRedactedResumeFile } from './redactResume';
 import { log, logError } from './logger';
 
 export type AttachedFile = { name: string; path: string };
@@ -206,6 +207,14 @@ async function writeOutputs(jobDir: string, resume: ResumeData): Promise<void> {
   fs.writeFileSync(path.join(jobDir, 'resume.pdf'), pdfBuffer);
 }
 
+function refreshRedactedResume(jobDir: string, resume: ResumeData): void {
+  try {
+    ensureRedactedResumeFile(jobDir, resume);
+  } catch (err) {
+    logError('applySuggestions: failed to regenerate structured-output-redacted.json (will heal on next call):', err);
+  }
+}
+
 export async function applySuggestions(input: ApplySuggestionsInput): Promise<ApplySuggestionsResult> {
   validateInput(input);
 
@@ -232,6 +241,7 @@ export async function applySuggestions(input: ApplySuggestionsInput): Promise<Ap
   }
 
   await writeOutputs(input.jobDir, outcome.newResume);
+  refreshRedactedResume(input.jobDir, outcome.newResume);
 
   return {
     resume: outcome.newResume,

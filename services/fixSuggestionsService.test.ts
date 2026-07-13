@@ -6,6 +6,7 @@ import path from 'path';
 const runOpenCodeMock = vi.fn();
 const buildLatexMock = vi.fn();
 const compilePDFMock = vi.fn();
+const ensureRedactedResumeFileMock = vi.fn();
 
 vi.mock('./ai', () => ({
   runOpenCode: (...args: unknown[]) => runOpenCodeMock(...args),
@@ -25,6 +26,14 @@ vi.mock('./compiler', () => ({
 vi.mock('./backupService', () => ({
   createVersionedBackup: vi.fn().mockReturnValue({ version: 1, backupDir: '/tmp/opencode/job-fake/backups/v1', files: ['structured-output.json', 'resume.pdf', 'resume.tex'] }),
 }));
+
+vi.mock('./redactResume', async () => {
+  const actual = await vi.importActual<typeof import('./redactResume.js')>('./redactResume.js');
+  return {
+    ...actual,
+    ensureRedactedResumeFile: (...args: unknown[]) => ensureRedactedResumeFileMock(...args),
+  };
+});
 
 vi.mock('./logger', () => ({
   log: vi.fn(),
@@ -98,8 +107,18 @@ describe('applySuggestions', () => {
     runOpenCodeMock.mockReset();
     buildLatexMock.mockReset();
     compilePDFMock.mockReset();
+    ensureRedactedResumeFileMock.mockReset();
     buildLatexMock.mockReturnValue('\\documentclass{article}\\begin{document}updated\\end{document}');
     compilePDFMock.mockResolvedValue(Buffer.from('%PDF-1.4\nupdated'));
+    ensureRedactedResumeFileMock.mockImplementation((jobDir: string, source: { name: string; email: string; phone: string; linkedinUrl: string; linkedinDisplay: string; [k: string]: unknown }) => {
+      const redacted = JSON.parse(JSON.stringify(source));
+      for (const f of ['name', 'phone', 'email', 'linkedinUrl', 'linkedinDisplay']) {
+        redacted[f] = '';
+      }
+      const targetPath = path.join(jobDir, 'structured-output-redacted.json');
+      fs.writeFileSync(targetPath, JSON.stringify(redacted, null, 2), 'utf8');
+      return { path: targetPath, redacted, wroteFile: true };
+    });
   });
 
   it('writes structured-output.json + resume.tex + resume.pdf on success', async () => {
@@ -262,6 +281,57 @@ describe('applySuggestions', () => {
       { jobDir, userSuggestions: '   ', attachedFiles: [], resumePath, redactedResumePath: redactedPath },
       /userSuggestions is required/
     );
+  });
+
+  it('regenerates structured-output-redacted.json after a successful edit', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => {
+        r.summary = 'Tightened summary mentioning Kafka';
+        r.skills.frameworks = 'Express, Kafka';
+      });
+      return { sessionId: 'ses_regen' };
+    });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    await applySuggestions({
+      jobDir,
+      userSuggestions: 'Tighten the summary. Add Kafka.',
+      attachedFiles: [],
+      resumePath,
+      redactedResumePath: redactedPath,
+    });
+
+    expect(fs.existsSync(redactedPath)).toBe(true);
+    const redacted = JSON.parse(fs.readFileSync(redactedPath, 'utf8'));
+    expect(redacted.summary).toBe('Tightened summary mentioning Kafka');
+    expect(redacted.skills.frameworks).toBe('Express, Kafka');
+    expect(redacted.name).toBe('');
+    expect(redacted.email).toBe('');
+    expect(redacted.phone).toBe('');
+    expect(redacted.education[0].institution).toBe('Uni');
+  });
+
+  it('continues when ensureRedactedResumeFile throws (redacted file is stale until next call)', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => { r.summary = 'Updated'; });
+      return { sessionId: 'ses_throw' };
+    });
+    ensureRedactedResumeFileMock.mockImplementation(() => { throw new Error('synthetic redact failure'); });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    const result = await applySuggestions({
+      jobDir,
+      userSuggestions: 'x',
+      attachedFiles: [],
+      resumePath,
+      redactedResumePath: redactedPath,
+    });
+
+    expect(result.sessionId).toBe('ses_throw');
+    const real = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
+    expect(real.summary).toBe('Updated');
   });
 });
 
