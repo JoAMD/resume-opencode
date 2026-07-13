@@ -5,6 +5,7 @@ import { ResumeData } from './types';
 import { buildLatex } from './latex';
 import { compilePDF } from './compiler';
 import { createVersionedBackup, BackupResult } from './backupService';
+import { ensureRedactedResumeFile } from './redactResume';
 import { log, logError } from './logger';
 
 export type AttachedFile = { name: string; path: string };
@@ -14,6 +15,7 @@ export interface ApplySuggestionsInput {
   userSuggestions: string;
   attachedFiles: AttachedFile[];
   resumePath: string;
+  redactedResumePath: string;
   modelSelect?: string;
   promptLogDir?: string;
 }
@@ -34,24 +36,20 @@ export class NoOpResultError extends Error {
   }
 }
 
-export class InvalidResponseError extends Error {
-  readonly code = 'invalid-response';
-  constructor(detail: string) {
-    super(`Invalid response from OpenCode: ${detail}`);
-  }
-}
-
-const RESUME_PATH_PLACEHOLDER = '{RESUME_PATH}';
+const REDACTED_FILE_NAME = 'structured-output-redacted.json';
+const RESUME_FILE_NAME = 'structured-output.json';
 const ATTACHED_FILE_MAX_BYTES = 200_000;
 const DEFAULT_MODEL = 'opencode-go/minimax-m3';
-const FOLLOW_UP_INSTRUCTION =
-  'Your previous response did not actually modify the resume. ' +
-  'Read the file at {RESUME_PATH} again and make concrete, visible edits ' +
-  'to the summary, skills, or bullets that align with the user\'s suggestions above. ' +
-  'Return the FULL revised JSON object.';
-const RESERVED_FILE_NAMES = new Set(['structured-output.json']);
+const RESERVED_FILE_NAMES = new Set([REDACTED_FILE_NAME, RESUME_FILE_NAME]);
 
 const ATTACH_ORDER = ['job-description.txt', 'full-jd.txt', 'other-input.txt', 'ats-analysis.md'];
+
+const NOOP_FOLLOWUP =
+  'Your previous response did not actually modify the resume file. ' +
+  'Use the opencode `edit` tool (NOT `write`) to apply the user\'s ' +
+  'suggestions directly to the structured-output.json on disk. ' +
+  'Make small, concrete edits (a few words or a bullet) and verify the ' +
+  'file changed.';
 
 function safeReadFile(filePath: string, maxBytes = ATTACHED_FILE_MAX_BYTES): string {
   const stat = fs.statSync(filePath);
@@ -86,6 +84,7 @@ function requireExists(label: string, filePath: string): void {
 function validateInput(input: ApplySuggestionsInput): void {
   requireExists('jobDir', input.jobDir);
   requireExists('resumePath', input.resumePath);
+  requireExists('redactedResumePath', input.redactedResumePath);
   if (!input.userSuggestions?.trim()) {
     throw new Error('userSuggestions is required');
   }
@@ -127,64 +126,10 @@ function buildUserContent(input: ApplySuggestionsInput, fileContents: Map<string
   appendAttachedBlock(blocks, 'USER SUGGESTIONS', input.userSuggestions.trim());
   const included = appendOrderedAttachedBlocks(blocks, fileContents);
   appendRemainingAttachedBlocks(blocks, fileContents, included);
-  blocks.push(`RESUME PATH: ${input.resumePath}`);
-  blocks.push('(The model should read the file at this path before editing.)');
+  blocks.push(`REDACTED RESUME (read this; PII already stripped): ${input.redactedResumePath}`);
+  blocks.push(`REAL RESUME FILE TO EDIT IN PLACE: ${input.resumePath}`);
+  blocks.push('Preserve every PII field (name, phone, email, linkedinUrl, linkedinDisplay) and the full education array. Only change the sections the user asked about.');
   return blocks.join('\n');
-}
-
-function isStringField(record: Record<string, unknown>, key: string): boolean {
-  return typeof record[key] === 'string';
-}
-
-function isObjectField(record: Record<string, unknown>, key: string): boolean {
-  return Boolean(record[key]) && typeof record[key] === 'object';
-}
-
-function isArrayField(record: Record<string, unknown>, key: string): boolean {
-  return Array.isArray(record[key]);
-}
-
-type FieldType = 'string' | 'object' | 'array';
-type FieldSpec = { key: string; type: FieldType };
-
-const REQUIRED_RESUME_FIELDS: readonly FieldSpec[] = [
-  { key: 'name', type: 'string' },
-  { key: 'summary', type: 'string' },
-  { key: 'skills', type: 'object' },
-  { key: 'experience', type: 'array' },
-  { key: 'education', type: 'array' },
-  { key: 'projects', type: 'array' },
-];
-
-const TYPE_LABELS: Record<FieldType, string> = { string: 'string', object: 'object', array: 'array' };
-
-function valueMatchesType(value: unknown, type: FieldType): boolean {
-  if (type === 'string') return typeof value === 'string';
-  if (type === 'object') return Boolean(value) && typeof value === 'object';
-  return Array.isArray(value);
-}
-
-function checkField(r: Record<string, unknown>, spec: FieldSpec): void {
-  if (!valueMatchesType(r[spec.key], spec.type)) {
-    throw new InvalidResponseError(`missing or non-${TYPE_LABELS[spec.type]} "${spec.key}" in structured response`);
-  }
-}
-
-function validateResumeShape(r: Record<string, unknown>): void {
-  for (const spec of REQUIRED_RESUME_FIELDS) checkField(r, spec);
-}
-
-function asResumeData(value: unknown): ResumeData {
-  if (!value || typeof value !== 'object') {
-    throw new InvalidResponseError('structured response was not an object');
-  }
-  validateResumeShape(value as Record<string, unknown>);
-  return value as ResumeData;
-}
-
-interface ModelAttempt {
-  structured: unknown;
-  sessionId?: string;
 }
 
 interface ModelContext {
@@ -192,11 +137,8 @@ interface ModelContext {
   promptLogDir: string;
 }
 
-interface DiffContext {
-  currentResumeJson: unknown;
-  userContent: string;
-  resumePath: string;
-  modelCtx: ModelContext;
+interface ModelAttempt {
+  sessionId?: string;
 }
 
 async function runModelAttempt(modelCtx: ModelContext, userContent: string): Promise<ModelAttempt> {
@@ -210,9 +152,24 @@ async function runModelAttempt(modelCtx: ModelContext, userContent: string): Pro
   );
 }
 
-function buildRetryUserContent(userContent: string, resumePath: string): string {
-  const followUp = FOLLOW_UP_INSTRUCTION.replace('{RESUME_PATH}', resumePath);
-  return `${userContent}\n\n---\nFOLLOW-UP: ${followUp}`;
+function buildRetryUserContent(userContent: string): string {
+  return `${userContent}\n\n---\nFOLLOW-UP: ${NOOP_FOLLOWUP}`;
+}
+
+class ResumeFile {
+  constructor(readonly path: string) {}
+  read(): string { return fs.readFileSync(this.path, 'utf8'); }
+  readJson(): ResumeData { return JSON.parse(this.read()) as ResumeData; }
+  unchangedSince(snapshot: string): boolean {
+    try { return this.read() === snapshot; } catch { return true; }
+  }
+  writeJson(resume: ResumeData): void {
+    fs.writeFileSync(this.path, JSON.stringify(resume, null, 2), 'utf8');
+  }
+}
+
+function snapshotResume(resume: ResumeFile): string {
+  return resume.read();
 }
 
 interface DiffOutcome {
@@ -221,45 +178,60 @@ interface DiffOutcome {
   noOp: boolean;
 }
 
-async function runWithNoOpRetry(ctx: DiffContext): Promise<DiffOutcome> {
-  const first = await runModelAttempt(ctx.modelCtx, ctx.userContent);
-  const firstResume = asResumeData(first.structured);
-  if (!resumesAreEqual(ctx.currentResumeJson, firstResume)) {
-    return { newResume: firstResume, sessionId: first.sessionId ?? '', noOp: false };
+async function runWithNoOpRetry(args: {
+  before: string;
+  resume: ResumeFile;
+  userContent: string;
+  modelCtx: ModelContext;
+}): Promise<DiffOutcome> {
+  const first = await runModelAttempt(args.modelCtx, args.userContent);
+  if (!args.resume.unchangedSince(args.before)) {
+    return { newResume: args.resume.readJson(), sessionId: first.sessionId ?? '', noOp: false };
   }
 
   log('applySuggestions: first attempt was a no-op; retrying once with follow-up');
-  const retryUserContent = buildRetryUserContent(ctx.userContent, ctx.resumePath);
-  const second = await runModelAttempt(ctx.modelCtx, retryUserContent);
-  const secondResume = asResumeData(second.structured);
-  return { newResume: secondResume, sessionId: second.sessionId ?? '', noOp: resumesAreEqual(ctx.currentResumeJson, secondResume) };
+  const retryUserContent = buildRetryUserContent(args.userContent);
+  const second = await runModelAttempt(args.modelCtx, retryUserContent);
+  return {
+    newResume: args.resume.readJson(),
+    sessionId: second.sessionId ?? first.sessionId ?? '',
+    noOp: args.resume.unchangedSince(args.before),
+  };
 }
 
 async function writeOutputs(jobDir: string, resume: ResumeData): Promise<void> {
   const latexSource = buildLatex(resume);
   const pdfBuffer = await compilePDF(latexSource);
-  fs.writeFileSync(path.join(jobDir, 'structured-output.json'), JSON.stringify(resume, null, 2), 'utf8');
+  fs.writeFileSync(path.join(jobDir, RESUME_FILE_NAME), JSON.stringify(resume, null, 2), 'utf8');
   fs.writeFileSync(path.join(jobDir, 'resume.tex'), latexSource, 'utf8');
   fs.writeFileSync(path.join(jobDir, 'resume.pdf'), pdfBuffer);
+}
+
+function refreshRedactedResume(jobDir: string, resume: ResumeData): void {
+  try {
+    ensureRedactedResumeFile(jobDir, resume);
+  } catch (err) {
+    logError('applySuggestions: failed to regenerate structured-output-redacted.json (will heal on next call):', err);
+  }
 }
 
 export async function applySuggestions(input: ApplySuggestionsInput): Promise<ApplySuggestionsResult> {
   validateInput(input);
 
   const backup = createVersionedBackup(input.jobDir, 'resume');
-  const currentResumeJson = JSON.parse(safeReadFile(input.resumePath));
+  const resume = new ResumeFile(input.resumePath);
+  const before = snapshotResume(resume);
   const fileContents = resolveAttachedFileMap(input.attachedFiles);
   const promptLogDir = input.promptLogDir || path.join(input.jobDir, 'prompt-logs', 'fix-suggestions');
   fs.mkdirSync(promptLogDir, { recursive: true });
-  const userContent = buildUserContent(input, fileContents)
-    .replace(RESUME_PATH_PLACEHOLDER, input.resumePath);
+  const userContent = buildUserContent(input, fileContents);
 
   log('applySuggestions: starting first attempt, model:', input.modelSelect ?? '<env default>');
 
   const outcome = await runWithNoOpRetry({
-    currentResumeJson,
+    before,
+    resume,
     userContent,
-    resumePath: input.resumePath,
     modelCtx: { model: input.modelSelect, promptLogDir },
   });
 
@@ -269,6 +241,7 @@ export async function applySuggestions(input: ApplySuggestionsInput): Promise<Ap
   }
 
   await writeOutputs(input.jobDir, outcome.newResume);
+  refreshRedactedResume(input.jobDir, outcome.newResume);
 
   return {
     resume: outcome.newResume,

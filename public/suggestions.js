@@ -4,10 +4,17 @@
 // wires the file-pill UX, the free-text suggestions, and the
 // POST /generate/applySuggestions + /generate/task/:taskId poll loop.
 
-const DEFAULT_AUTO_ATTACH = ['ats-analysis.md', 'job-description.txt', 'other-input.txt'];
-const RESUME_JSON_NAME = 'structured-output.json';
+const DEFAULT_AUTO_ATTACH = [
+  'ats-analysis.md',
+  'job-description.txt',
+  'other-input.txt',
+  'structured-output-redacted.json',
+];
+const REDACTED_RESUME_NAME = 'structured-output-redacted.json';
 const POLL_INTERVAL_MS = 5000;
 const MAX_SUGGESTIONS_LENGTH = 4000;
+const SLUG_WATCH_INTERVAL_MS = 1000;
+const SLUG_WATCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 function el(id) { return document.getElementById(id); }
 
@@ -45,11 +52,6 @@ function fmtError(err) {
 function getJobSlug() {
   const w = globalThis.__resumeOpencode;
   return w && w.lastJobDir ? w.lastJobDir : null;
-}
-
-function getJobsPath() {
-  const w = globalThis.__resumeOpencode;
-  return w && w.jobsPath ? w.jobsPath : '';
 }
 
 function getCurrentModel() {
@@ -103,28 +105,65 @@ function initSuggestionsPanel({ tplContent, popover }) {
   const sessionCopyBtn = el('suggestions-session-copy');
   const webLink = el('suggestions-web-link');
 
+  let lastKnownSlug = null;
+  let slugWatchTimer = null;
+
+  function autoAttachDefaults() {
+    for (const name of DEFAULT_AUTO_ATTACH) {
+      if (pills.querySelector(`.pill[data-file-name="${CSS.escape(name)}"]`)) continue;
+      const pill = createPill(name, true);
+      if (name === REDACTED_RESUME_NAME) {
+        pill.title = 'PII-stripped copy of structured-output.json — always sent to the model so it never sees your real name/email/phone';
+      }
+      pills.appendChild(pill);
+    }
+  }
+
+  async function ensureRedactedResumeForCurrentJob() {
+    const slug = getJobSlug();
+    if (!slug) return;
+    try {
+      const res = await fetch('/generate/ensureRedactedResume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobDir: slug }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.warn('ensureRedactedResume failed:', data.error || res.status);
+      }
+    } catch (err) {
+      console.warn('ensureRedactedResume network error:', err);
+    }
+  }
+
   function refreshSlug() {
     const slug = getJobSlug();
-    if (slug) {
+    if (slug && slug !== lastKnownSlug) {
+      lastKnownSlug = slug;
       slugNode.textContent = slug;
       section.classList.remove('hidden');
       autoAttachDefaults();
-    } else {
+      ensureRedactedResumeForCurrentJob();
+    } else if (!slug) {
       slugNode.textContent = '(none — generate a resume first)';
       section.classList.add('hidden');
     }
   }
 
-  function autoAttachDefaults() {
-    for (const name of DEFAULT_AUTO_ATTACH) {
-      if (pills.querySelector(`.pill[data-file-name="${CSS.escape(name)}"]`)) continue;
-      pills.appendChild(createPill(name, true));
-    }
-    if (!pills.querySelector(`.pill[data-file-name="${CSS.escape(RESUME_JSON_NAME)}"]`)) {
-      const p = createPill(RESUME_JSON_NAME, false);
-      p.title = 'Sent as a file path so the model can read the original resume JSON';
-      pills.appendChild(p);
-    }
+  function startSlugWatcher() {
+    const startedAt = Date.now();
+    if (slugWatchTimer) clearInterval(slugWatchTimer);
+    slugWatchTimer = setInterval(() => {
+      if (getJobSlug() && getJobSlug() !== lastKnownSlug) {
+        refreshSlug();
+        return;
+      }
+      if (Date.now() - startedAt > SLUG_WATCH_TIMEOUT_MS) {
+        clearInterval(slugWatchTimer);
+        slugWatchTimer = null;
+      }
+    }, SLUG_WATCH_INTERVAL_MS);
   }
 
   async function fetchFolderFiles() {
@@ -171,14 +210,14 @@ function initSuggestionsPanel({ tplContent, popover }) {
 
   function openFilePopover() {
     if (!getJobSlug()) {
-      alert('Generate a resume first so a job folder is available.');
+      setStatus(statusNode, 'Generate a resume first so a job folder is available.', 'error');
       return;
     }
     popoverRoot.classList.remove('hidden');
     popoverSearch.value = '';
     fetchFolderFiles()
       .then((items) => renderPopoverList(items, ''))
-      .catch((err) => renderPopoverList([], ''));
+      .catch(() => renderPopoverList([], ''));
     setTimeout(() => popoverSearch.focus(), 0);
   }
 
@@ -257,10 +296,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
   }
 
   function validateClickInputs(slug, suggestions, attached) {
-    if (!slug) {
-      alert('Generate a resume first so a job folder is available.');
-      return 'no-slug';
-    }
+    if (!slug) return 'Generate a resume first so a job folder is available.';
     if (!suggestions) return 'Please enter at least one suggestion.';
     if (suggestions.length > MAX_SUGGESTIONS_LENGTH) {
       return `Suggestions too long (${suggestions.length} > ${MAX_SUGGESTIONS_LENGTH}).`;
@@ -311,9 +347,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
     const attached = attachedFilePaths();
     const validationError = validateClickInputs(slug, suggestions, attached);
     if (validationError) {
-      if (validationError !== 'no-slug') {
-        setStatus(statusNode, validationError, 'error');
-      }
+      setStatus(statusNode, validationError, 'error');
       return;
     }
 
@@ -352,6 +386,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
   });
 
   refreshSlug();
+  startSlugWatcher();
 }
 
 function bootstrap() {

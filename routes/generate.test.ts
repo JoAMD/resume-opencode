@@ -291,9 +291,25 @@ describe('POST /generate/applySuggestions', () => {
     expect(res.body).toEqual({ error: 'jobDir is required' });
   });
 
+  const baseJobDir = '/tmp/opencode/fake-project-root/jobs/shopify-swe';
+  const baseResume = `${baseJobDir}/structured-output.json`;
+  const baseRedacted = `${baseJobDir}/structured-output-redacted.json`;
+  const stubShopifySweExists = (extra: string[] = []) => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s === baseJobDir) return true;
+      if (s === baseResume) return true;
+      if (s === baseRedacted) return true;
+      return extra.includes(s);
+    });
+    statSync.mockImplementation((p: unknown) => ({
+      isDirectory: () => p === baseJobDir,
+      isFile: () => p !== baseJobDir,
+    }));
+  };
+
   it('returns 400 when userSuggestions is empty', async () => {
-    existsSync.mockImplementation((p: unknown) => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || p === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json');
-    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+    stubShopifySweExists();
 
     const { default: router } = await import('./generate.js');
     const res = await invokeRoute(router, 'post', '/applySuggestions', { jobDir: 'shopify-swe', userSuggestions: '   ' });
@@ -302,11 +318,7 @@ describe('POST /generate/applySuggestions', () => {
   });
 
   it('returns 400 when attachedFilePaths escape the job directory', async () => {
-    existsSync.mockImplementation((p: unknown) => {
-      const s = String(p);
-      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json';
-    });
-    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+    stubShopifySweExists();
 
     const { default: router } = await import('./generate.js');
     const res = await invokeRoute(router, 'post', '/applySuggestions', {
@@ -318,25 +330,40 @@ describe('POST /generate/applySuggestions', () => {
     expect(res.body.error).toMatch(/Attached file escapes job directory/);
   });
 
-  it('returns a taskId and resolves to complete when the service succeeds', async () => {
+  it('returns 400 when redacted resume is missing', async () => {
     existsSync.mockImplementation((p: unknown) => {
       const s = String(p);
-      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md';
+      return s === baseJobDir || s === baseResume;
     });
-    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+    statSync.mockImplementation((p: unknown) => ({
+      isDirectory: () => p === baseJobDir,
+      isFile: () => p !== baseJobDir,
+    }));
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'do something',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/structured-output-redacted.json not found/);
+  });
+
+  it('returns a taskId and resolves to complete when the service succeeds', async () => {
+    stubShopifySweExists([`${baseJobDir}/ats-analysis.md`]);
 
     applySuggestionsMock.mockResolvedValue({
       resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
       pdfUrl: '/jobs/shopify-swe/resume.pdf',
       sessionId: 'ses_apply_1',
-      backup: { version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] },
+      backup: { version: 1, backupDir: `${baseJobDir}/backups/v1`, files: [] },
     });
 
     const { default: router } = await import('./generate.js');
     const post = await invokeRoute(router, 'post', '/applySuggestions', {
       jobDir: 'shopify-swe',
       userSuggestions: 'tighten summary',
-      attachedFilePaths: ['/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md'],
+      attachedFilePaths: [`${baseJobDir}/ats-analysis.md`],
     });
     expect(post.status).toBe(200);
     expect(post.body.taskId).toMatch(/^task_/);
@@ -358,23 +385,13 @@ describe('POST /generate/applySuggestions', () => {
   });
 
   it('accepts bare filenames in attachedFilePaths by resolving them against the job dir', async () => {
-    existsSync.mockImplementation((p: unknown) => {
-      const s = String(p);
-      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe') return true;
-      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json') return true;
-      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md') return true;
-      return false;
-    });
-    statSync.mockImplementation((p: unknown) => ({
-      isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe',
-      isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe',
-    }));
+    stubShopifySweExists([`${baseJobDir}/ats-analysis.md`]);
 
     applySuggestionsMock.mockResolvedValue({
       resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
       pdfUrl: '/jobs/shopify-swe/resume.pdf',
       sessionId: 'ses_apply_bare',
-      backup: { version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] },
+      backup: { version: 1, backupDir: `${baseJobDir}/backups/v1`, files: [] },
     });
 
     const { default: router } = await import('./generate.js');
@@ -391,11 +408,7 @@ describe('POST /generate/applySuggestions', () => {
   });
 
   it('resolves to error+no-op when the service throws NoOpResultError', async () => {
-    existsSync.mockImplementation((p: unknown) => {
-      const s = String(p);
-      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json';
-    });
-    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+    stubShopifySweExists();
 
     const { NoOpResultError } = await import('../services/fixSuggestionsService.js');
     applySuggestionsMock.mockRejectedValue(new (NoOpResultError as any)({ version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] }));
@@ -408,6 +421,51 @@ describe('POST /generate/applySuggestions', () => {
     expect(poll.body.status).toBe('error');
     expect(poll.body.error).toBe('no-op');
     expect(poll.body.result.backupPath).toContain('backups/v1');
+  });
+});
+
+describe('POST /generate/ensureRedactedResume', () => {
+  beforeEach(() => {
+    existsSync.mockReset();
+    mkdirSync.mockReset();
+    writeFileSync.mockReset();
+    readFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+  });
+
+  it('returns the path of the written redacted file', async () => {
+    const jobDir = '/tmp/opencode/fake-project-root/jobs/redact-folder';
+    const resumePath = `${jobDir}/structured-output.json`;
+    const redactedPath = `${jobDir}/structured-output-redacted.json`;
+    const sample = { name: 'X', phone: '0400', email: 'x@y.z', linkedinUrl: '', linkedinDisplay: '', summary: 's', skills: {}, experience: [], education: [], projects: [] };
+    existsSync.mockImplementation((p: unknown) => p === jobDir || p === resumePath);
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === jobDir, isFile: () => p !== jobDir }));
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === resumePath) return JSON.stringify(sample);
+      return '';
+    });
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/ensureRedactedResume', { jobDir: 'redact-folder' });
+    expect(res.status).toBe(200);
+    expect(res.body.path).toBe(redactedPath);
+    expect(res.body.wroteFile).toBe(true);
+    const written = (writeFileSync as Mock).mock.calls.find((c) => c[0] === redactedPath);
+    expect(written).toBeDefined();
+    const parsed = JSON.parse(written![1]);
+    expect(parsed.name).toBe('');
+    expect(parsed.email).toBe('');
+    expect(parsed.phone).toBe('');
+  });
+
+  it('returns 400 when structured-output.json is missing', async () => {
+    existsSync.mockImplementation((p: unknown) => p === '/tmp/opencode/fake-project-root/jobs/redact-folder');
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/redact-folder', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/redact-folder' }));
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/ensureRedactedResume', { jobDir: 'redact-folder' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/structured-output.json not found/);
   });
 });
 
