@@ -12,6 +12,7 @@ const PROMPT_FILES = [
   'ats-analysis-prompt.txt',
   'govt-star-method-prompt.txt',
   'trim-resume-prompt.txt',
+  'fix-suggestions-prompt.txt',
 ];
 
 const TEMPLATE_FILES = [

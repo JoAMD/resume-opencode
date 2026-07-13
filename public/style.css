@@ -234,3 +234,113 @@ button[type="submit"]:disabled,
   cursor: pointer;
 }
 .button-tiny:hover { background: #2a2a4e; }
+
+.suggestions {
+  margin-top: 1.5rem;
+  padding: 1rem 1rem 1.25rem;
+  background: #14141a;
+  border: 1px solid #2e2e3e;
+  border-radius: 8px;
+}
+.suggestions h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 0.25rem;
+}
+.suggestions .subtitle {
+  color: #888;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+.folder-slug {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #7dd3fc;
+  background: #0e1a2a;
+  padding: 0.3rem 0.5rem;
+  border-radius: 3px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  background: #0e0e12;
+  border: 1px dashed #2e2e3e;
+  border-radius: 6px;
+  min-height: 2.5rem;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: #1e2a3a;
+  color: #7db8f7;
+  border: 1px solid #2d4a6e;
+  padding: 0.25rem 0.5rem 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-family: monospace;
+}
+.pill-x {
+  background: transparent;
+  color: #7db8f7;
+  border: none;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.1rem;
+}
+.pill-x:hover { color: #f87171; }
+
+.popover {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.popover.hidden { display: none; }
+.popover-body {
+  background: #14141a;
+  border: 1px solid #2e2e3e;
+  border-radius: 8px;
+  padding: 1rem;
+  width: 90%;
+  max-width: 420px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.popover-body ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+  background: #0e0e12;
+  border: 1px solid #2e2e3e;
+  border-radius: 4px;
+}
+.popover-body li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #1a1a22;
+  font-size: 0.85rem;
+  color: #e8e8e8;
+  font-family: monospace;
+}
+.popover-body li:last-child { border-bottom: none; }
+.popover-empty { color: #888; justify-content: center; }

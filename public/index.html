@@ -565,6 +565,8 @@
         const res = await fetch('/api/config');
         const data = await res.json();
         globalThis.__JOBS_PATH__ = data.jobsPath;
+        globalThis.__resumeOpencode = globalThis.__resumeOpencode || {};
+        globalThis.__resumeOpencode.jobsPath = data.jobsPath;
         folderPathInput.value = globalThis.__JOBS_PATH__ + '/';
       } catch (e) {
         console.error('Failed to load config:', e);
@@ -592,6 +594,14 @@
     // Store last task ID and last job dir for per-tab tracking
     let lastTaskId = null;
     let lastJobDir = null;
+
+    // Expose state for sibling modules (e.g. public/suggestions.js)
+    globalThis.__resumeOpencode = globalThis.__resumeOpencode || {};
+    Object.defineProperty(globalThis.__resumeOpencode, 'lastJobDir', {
+      get() { return lastJobDir; },
+      set(v) { lastJobDir = v; },
+    });
+    globalThis.__resumeOpencode.getCurrentModel = () => document.getElementById('model-select')?.value;
 
     // Run ATS analysis
     document.getElementById('run-ats-analysis-btn').addEventListener('click', async () => {
@@ -656,5 +666,6 @@
       }
     });
   </script>
+  <script type="module" src="suggestions.js"></script>
 </body>
 </html>

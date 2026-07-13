@@ -488,6 +488,9 @@ const COVER_LETTER_SYSTEM_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'cover-le
 const ATS_KEYWORD_EXTRACTION_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'ats-keyword-extraction-prompt.txt'));
 const GOVT_STAR_METHOD_PROMPT_APPENDIX = readLazyFile(path.join(PROMPTS_DIR, 'govt-star-method-prompt.txt'));
 const TRIM_RESUME_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'trim-resume-prompt.txt'));
+const FIX_SUGGESTIONS_PROMPT = readLazyFile(path.join(PROMPTS_DIR, 'fix-suggestions-prompt.txt'));
+
+export { FIX_SUGGESTIONS_PROMPT };
 
 const BASE_RESUME_TEMPLATE = readLazyFile(path.join(TEMPLATES_DIR, 'base-resume.txt.template'));
 const BASE_RESUME_TEMPLATE_MINIMAL = readLazyFile(path.join(TEMPLATES_DIR, 'base-resume-minimal.txt.template'));
