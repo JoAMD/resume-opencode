@@ -11,6 +11,7 @@ import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
 import { appendApplication, findApplications, writeLinkToJobDir, type ApplicationRow } from '../services/applications';
+import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 
 const router = Router();
 
@@ -552,6 +553,136 @@ router.post('/runATSAnalysis', async (req, res) => {
     logError('ATS analysis error:', err);
     res.status(500).json({ error: message });
   }
+});
+
+function buildOpencodeWebLink(sessionId?: string | null): string | null {
+  if (!sessionId) return null;
+  const host = process.env.OPENCODE_HOSTNAME || 'localhost';
+  const port = process.env.OPENCODE_PORT || '4096';
+  return `http://${host}:${port}/session/${sessionId}`;
+}
+
+function listJobFilesHandler(req: Request, res: import('express').Response) {
+  const slug = typeof req.query.jobDir === 'string' ? req.query.jobDir : '';
+  if (!slug) {
+    res.status(400).json({ error: 'jobDir required' });
+    return;
+  }
+  const resolved = resolveJobDir(slug);
+  const realResolved = (() => { try { return fs.realpathSync(resolved); } catch { return null; } })();
+  const realJobs = (() => { try { return fs.realpathSync(jobsDir); } catch { return null; } })();
+  if (!realResolved || !realJobs || !realResolved.startsWith(realJobs + path.sep) && realResolved !== realJobs) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    res.status(404).json({ error: 'Job directory not found' });
+    return;
+  }
+  const entries = fs.readdirSync(resolved, { withFileTypes: true });
+  const files = entries
+    .filter((e) => e.isFile())
+    .map((e) => {
+      const full = path.join(resolved, e.name);
+      const stat = fs.statSync(full);
+      return { name: e.name, path: full, size: stat.size };
+    });
+  res.json({ files });
+}
+
+router.get('/listJobFiles', listJobFilesHandler);
+
+router.post('/applySuggestions', async (req, res) => {
+  const { jobDir: slug, userSuggestions, attachedFilePaths, modelSelect } = req.body as {
+    jobDir?: string;
+    userSuggestions?: string;
+    attachedFilePaths?: string[];
+    modelSelect?: string;
+  };
+
+  if (!slug) {
+    res.status(400).json({ error: 'jobDir is required' });
+    return;
+  }
+  const jobDir = resolveJobDir(slug);
+  if (!fs.existsSync(jobDir) || !fs.statSync(jobDir).isDirectory()) {
+    res.status(404).json({ error: 'Job directory not found' });
+    return;
+  }
+  if (!userSuggestions?.trim()) {
+    res.status(400).json({ error: 'userSuggestions is required' });
+    return;
+  }
+
+  const resumePath = path.join(jobDir, 'structured-output.json');
+  if (!fs.existsSync(resumePath)) {
+    res.status(400).json({ error: 'structured-output.json not found in this job folder' });
+    return;
+  }
+
+  const requested = Array.isArray(attachedFilePaths) ? attachedFilePaths : [];
+  const realJobDir = (() => { try { return fs.realpathSync(jobDir); } catch { return null; } })();
+  const realJobsRoot = (() => { try { return fs.realpathSync(jobsDir); } catch { return null; } })();
+  if (!realJobDir || !realJobsRoot) {
+    res.status(500).json({ error: 'Failed to resolve job directory' });
+    return;
+  }
+  const attachedFiles: AttachedFile[] = [];
+  for (const p of requested) {
+    if (typeof p !== 'string') continue;
+    const real = (() => { try { return fs.realpathSync(p); } catch { return null; } })();
+    if (!real || (!real.startsWith(realJobDir + path.sep) && real !== realJobDir)) {
+      res.status(400).json({ error: `Attached file escapes job directory: ${p}` });
+      return;
+    }
+    if (!fs.existsSync(real) || !fs.statSync(real).isFile()) {
+      res.status(400).json({ error: `Attached file is not a regular file: ${p}` });
+      return;
+    }
+    attachedFiles.push({ name: path.basename(real), path: real });
+  }
+
+  const taskId = createTaskId();
+  taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
+  res.json({ taskId, jobDir: slug });
+
+  (async () => {
+    try {
+      const result = await applySuggestions({
+        jobDir,
+        userSuggestions,
+        attachedFiles,
+        resumePath,
+        modelSelect,
+      });
+      taskMap.set(taskId, {
+        status: 'complete',
+        startedAt: Date.now(),
+        sessionId: result.sessionId,
+        result: {
+          pdfUrl: result.pdfUrl,
+          sessionId: result.sessionId,
+          webLink: buildOpencodeWebLink(result.sessionId),
+          backupPath: result.backup.backupDir,
+          backupVersion: result.backup.version,
+        },
+      });
+    } catch (err) {
+      if (err instanceof NoOpResultError) {
+        log('applySuggestions task no-op:', taskId, 'backup:', err.backup.backupDir);
+        taskMap.set(taskId, {
+          status: 'error',
+          error: 'no-op',
+          startedAt: Date.now(),
+          result: { backupPath: err.backup.backupDir, backupVersion: err.backup.version },
+        });
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Internal server error';
+      logError('applySuggestions background error:', err);
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now() });
+    }
+  })();
 });
 
 function validateGenerateRequest(body: GenerateRequestBody): string | null {
