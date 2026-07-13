@@ -53,11 +53,23 @@ function makeFixture() {
   const jobDir = path.join(root, 'shopify-senior-swe');
   fs.mkdirSync(jobDir, { recursive: true });
   const resumePath = path.join(jobDir, 'structured-output.json');
+  const redactedPath = path.join(jobDir, 'structured-output-redacted.json');
   fs.writeFileSync(resumePath, JSON.stringify(RESUME_BASE, null, 2));
+  const redacted = JSON.parse(JSON.stringify(RESUME_BASE));
+  for (const f of ['name', 'phone', 'email', 'linkedinUrl', 'linkedinDisplay']) {
+    redacted[f] = '';
+  }
+  fs.writeFileSync(redactedPath, JSON.stringify(redacted, null, 2));
   fs.writeFileSync(path.join(jobDir, 'ats-analysis.md'), '# ATS analysis\n');
   fs.writeFileSync(path.join(jobDir, 'job-description.txt'), 'Build cool stuff.');
   fs.writeFileSync(path.join(jobDir, 'other-input.txt'), 'Company: Shopify\nRole: Senior SWE\n');
-  return { root, jobDir, resumePath };
+  return { root, jobDir, resumePath, redactedPath };
+}
+
+function applyEditsToFile(resumePath: string, mutator: (resume: any) => void) {
+  const current = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
+  mutator(current);
+  fs.writeFileSync(resumePath, JSON.stringify(current, null, 2), 'utf8');
 }
 
 describe('resumesAreEqual', () => {
@@ -91,11 +103,14 @@ describe('applySuggestions', () => {
   });
 
   it('writes structured-output.json + resume.tex + resume.pdf on success', async () => {
-    const { jobDir, resumePath } = makeFixture();
-    const updated = JSON.parse(JSON.stringify(RESUME_BASE));
-    updated.summary = 'Tightened summary mentioning Kafka and Terraform';
-    updated.skills.frameworks = 'Express, Kafka';
-    runOpenCodeMock.mockResolvedValueOnce({ structured: updated, sessionId: 'ses_new_1' });
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => {
+        r.summary = 'Tightened summary mentioning Kafka and Terraform';
+        r.skills.frameworks = 'Express, Kafka';
+      });
+      return { sessionId: 'ses_new_1' };
+    });
 
     const { applySuggestions } = await import('./fixSuggestionsService.js');
     const result = await applySuggestions({
@@ -107,24 +122,29 @@ describe('applySuggestions', () => {
         { name: 'other-input.txt', path: path.join(jobDir, 'other-input.txt') },
       ],
       resumePath,
+      redactedResumePath: redactedPath,
     });
 
     expect(result.sessionId).toBe('ses_new_1');
     expect(result.pdfUrl).toBe(`/jobs/${path.basename(jobDir)}/resume.pdf`);
-    expect(JSON.parse(fs.readFileSync(resumePath, 'utf8')).summary).toContain('Tightened');
+    const updated = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
+    expect(updated.summary).toContain('Tightened');
+    expect(updated.name).toBe('Test User');
+    expect(updated.email).toBe('test@example.com');
+    expect(updated.skills.frameworks).toContain('Kafka');
     expect(fs.existsSync(path.join(jobDir, 'resume.tex'))).toBe(true);
     expect(fs.existsSync(path.join(jobDir, 'resume.pdf'))).toBe(true);
     expect(runOpenCodeMock).toHaveBeenCalledTimes(1);
   });
 
-  it('retries once on no-op and returns success when retry changes the resume', async () => {
-    const { jobDir, resumePath } = makeFixture();
-    const unchanged = JSON.parse(JSON.stringify(RESUME_BASE));
-    const updated = JSON.parse(JSON.stringify(RESUME_BASE));
-    updated.skills.libraries = 'Jest';
+  it('retries once on no-op and returns success when retry changes the resume on disk', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
     runOpenCodeMock
-      .mockResolvedValueOnce({ structured: unchanged, sessionId: 'ses_attempt1' })
-      .mockResolvedValueOnce({ structured: updated, sessionId: 'ses_attempt2' });
+      .mockImplementationOnce(async () => ({ sessionId: 'ses_attempt1' }))
+      .mockImplementationOnce(async () => {
+        applyEditsToFile(resumePath, (r) => { r.skills.libraries = 'Jest'; });
+        return { sessionId: 'ses_attempt2' };
+      });
 
     const { applySuggestions } = await import('./fixSuggestionsService.js');
     const result = await applySuggestions({
@@ -132,6 +152,7 @@ describe('applySuggestions', () => {
       userSuggestions: 'Add Jest to libraries.',
       attachedFiles: [],
       resumePath,
+      redactedResumePath: redactedPath,
     });
 
     expect(runOpenCodeMock).toHaveBeenCalledTimes(2);
@@ -139,12 +160,11 @@ describe('applySuggestions', () => {
     expect(JSON.parse(fs.readFileSync(resumePath, 'utf8')).skills.libraries).toBe('Jest');
   });
 
-  it('throws NoOpResultError when both attempts return identical JSON', async () => {
-    const { jobDir, resumePath } = makeFixture();
-    const unchanged = JSON.parse(JSON.stringify(RESUME_BASE));
+  it('throws NoOpResultError when both attempts leave the file unchanged', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
     runOpenCodeMock
-      .mockResolvedValueOnce({ structured: unchanged, sessionId: 'ses_a' })
-      .mockResolvedValueOnce({ structured: unchanged, sessionId: 'ses_b' });
+      .mockResolvedValueOnce({ sessionId: 'ses_a' })
+      .mockResolvedValueOnce({ sessionId: 'ses_b' });
 
     const { applySuggestions, NoOpResultError } = await import('./fixSuggestionsService.js');
     await expect(
@@ -153,17 +173,47 @@ describe('applySuggestions', () => {
         userSuggestions: 'Try to change the resume.',
         attachedFiles: [],
         resumePath,
+        redactedResumePath: redactedPath,
       })
     ).rejects.toBeInstanceOf(NoOpResultError);
     expect(runOpenCodeMock).toHaveBeenCalledTimes(2);
     expect(fs.readFileSync(resumePath, 'utf8')).toContain('"summary": "Original summary"');
   });
 
+  it('preserves PII fields when the model edits the file on disk', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    const originalContent = fs.readFileSync(resumePath, 'utf8');
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => {
+        r.summary = 'Updated summary.';
+      });
+      return { sessionId: 'ses_pii' };
+    });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    await applySuggestions({
+      jobDir,
+      userSuggestions: 'Update summary only.',
+      attachedFiles: [],
+      resumePath,
+      redactedResumePath: redactedPath,
+    });
+
+    const after = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
+    expect(after.name).toBe('Test User');
+    expect(after.email).toBe('test@example.com');
+    expect(after.phone).toBe('0400000000');
+    expect(after.summary).toBe('Updated summary.');
+    expect(after.education[0].institution).toBe('Uni');
+    expect(originalContent).not.toBe(fs.readFileSync(resumePath, 'utf8'));
+  });
+
   it('creates the promptLogDir under the job folder before calling runOpenCode', async () => {
-    const { jobDir, resumePath } = makeFixture();
-    const updated = JSON.parse(JSON.stringify(RESUME_BASE));
-    updated.skills.libraries = 'Jest';
-    runOpenCodeMock.mockResolvedValueOnce({ structured: updated, sessionId: 'ses_logdir' });
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => { r.skills.libraries = 'Jest'; });
+      return { sessionId: 'ses_logdir' };
+    });
 
     const { applySuggestions } = await import('./fixSuggestionsService.js');
     await applySuggestions({
@@ -171,6 +221,7 @@ describe('applySuggestions', () => {
       userSuggestions: 'x',
       attachedFiles: [],
       resumePath,
+      redactedResumePath: redactedPath,
     });
 
     const expectedDir = path.join(jobDir, 'prompt-logs', 'fix-suggestions');
@@ -178,43 +229,37 @@ describe('applySuggestions', () => {
     expect(runOpenCodeMock).toHaveBeenCalled();
     const callOpts = runOpenCodeMock.mock.calls[0][0];
     expect(callOpts.promptLogDir).toBe(expectedDir);
-  });
-
-  it('throws InvalidResponseError when the model returns garbage', async () => {
-    const { jobDir, resumePath } = makeFixture();
-    runOpenCodeMock.mockResolvedValueOnce({ structured: null, sessionId: 'ses_bad' });
-
-    const { applySuggestions, InvalidResponseError } = await import('./fixSuggestionsService.js');
-    await expect(
-      applySuggestions({
-        jobDir,
-        userSuggestions: 'Anything',
-        attachedFiles: [],
-        resumePath,
-      })
-    ).rejects.toBeInstanceOf(InvalidResponseError);
+    expect(callOpts.jsonSchema).toBeUndefined();
   });
 
   it('rejects when jobDir does not exist', async () => {
-    const { resumePath } = makeFixture();
+    const { resumePath, redactedPath } = makeFixture();
     await expectApplySuggestionsRejects(
-      { jobDir: '/tmp/opencode/does-not-exist', userSuggestions: 'x', attachedFiles: [], resumePath },
+      { jobDir: '/tmp/opencode/does-not-exist', userSuggestions: 'x', attachedFiles: [], resumePath, redactedResumePath: redactedPath },
       /jobDir does not exist/
     );
   });
 
   it('rejects when resumePath does not exist', async () => {
-    const { jobDir } = makeFixture();
+    const { jobDir, redactedPath } = makeFixture();
     await expectApplySuggestionsRejects(
-      { jobDir, userSuggestions: 'x', attachedFiles: [], resumePath: path.join(jobDir, 'nope.json') },
+      { jobDir, userSuggestions: 'x', attachedFiles: [], resumePath: path.join(jobDir, 'nope.json'), redactedResumePath: redactedPath },
       /resumePath does not exist/
     );
   });
 
-  it('rejects when userSuggestions is empty', async () => {
+  it('rejects when redactedResumePath does not exist', async () => {
     const { jobDir, resumePath } = makeFixture();
     await expectApplySuggestionsRejects(
-      { jobDir, userSuggestions: '   ', attachedFiles: [], resumePath },
+      { jobDir, userSuggestions: 'x', attachedFiles: [], resumePath, redactedResumePath: path.join(jobDir, 'nope.json') },
+      /redactedResumePath does not exist/
+    );
+  });
+
+  it('rejects when userSuggestions is empty', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    await expectApplySuggestionsRejects(
+      { jobDir, userSuggestions: '   ', attachedFiles: [], resumePath, redactedResumePath: redactedPath },
       /userSuggestions is required/
     );
   });
