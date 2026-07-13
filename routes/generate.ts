@@ -626,11 +626,17 @@ function validateApplySuggestionsRequest(body: ApplySuggestionsRequestBody): Val
   };
 }
 
-function validateAttachedFilePaths(rawPaths: string[], realJobDir: string, realJobsRoot: string): ValidationFailure | ValidationSuccess<AttachedFile[]> {
+function resolveAttachedPath(raw: string, realJobDir: string): string {
+  if (path.isAbsolute(raw)) return raw;
+  return path.join(realJobDir, raw);
+}
+
+function validateAttachedFilePaths(rawPaths: string[], realJobDir: string, _realJobsRoot: string): ValidationFailure | ValidationSuccess<AttachedFile[]> {
   const attachedFiles: AttachedFile[] = [];
   for (const p of rawPaths) {
     if (typeof p !== 'string') continue;
-    const real = safeRealpath(p);
+    const candidate = resolveAttachedPath(p, realJobDir);
+    const real = safeRealpath(candidate);
     if (!real || !pathIsInsideDir(real, realJobDir)) {
       return { ok: false, status: 400, error: `Attached file escapes job directory: ${p}` };
     }

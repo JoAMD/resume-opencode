@@ -357,6 +357,39 @@ describe('POST /generate/applySuggestions', () => {
     }
   });
 
+  it('accepts bare filenames in attachedFilePaths by resolving them against the job dir', async () => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe') return true;
+      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json') return true;
+      if (s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md') return true;
+      return false;
+    });
+    statSync.mockImplementation((p: unknown) => ({
+      isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe',
+      isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe',
+    }));
+
+    applySuggestionsMock.mockResolvedValue({
+      resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
+      pdfUrl: '/jobs/shopify-swe/resume.pdf',
+      sessionId: 'ses_apply_bare',
+      backup: { version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] },
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'tighten summary',
+      attachedFilePaths: ['ats-analysis.md'],
+    });
+    expect(post.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.body.status).toBe('complete');
+    expect(poll.body.result.sessionId).toBe('ses_apply_bare');
+  });
+
   it('resolves to error+no-op when the service throws NoOpResultError', async () => {
     existsSync.mockImplementation((p: unknown) => {
       const s = String(p);

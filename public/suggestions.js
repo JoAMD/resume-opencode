@@ -57,10 +57,11 @@ function getCurrentModel() {
   return sel ? sel.value : undefined;
 }
 
-function createPill(name, removable) {
+function createPill(name, removable, filePath) {
   const pill = document.createElement('span');
   pill.className = 'pill';
   pill.dataset.fileName = name;
+  if (filePath) pill.dataset.filePath = filePath;
   pill.textContent = name;
   if (removable) {
     const x = document.createElement('button');
@@ -153,7 +154,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
       addBtn.className = 'button-tiny';
       addBtn.textContent = 'Add';
       addBtn.addEventListener('click', () => {
-        pills.appendChild(createPill(f.name, true));
+        pills.appendChild(createPill(f.name, true, f.path));
         li.remove();
       });
       li.appendChild(name);
@@ -219,8 +220,10 @@ function initSuggestionsPanel({ tplContent, popover }) {
     }
   }
 
-  function attachedFileNames() {
-    return Array.from(pills.querySelectorAll('.pill')).map((p) => p.dataset.fileName);
+  function attachedFilePaths() {
+    return Array.from(pills.querySelectorAll('.pill'))
+      .map((p) => p.dataset.filePath || p.dataset.fileName)
+      .filter(Boolean);
   }
 
   function showResult({ pdfUrl, sessionId, webLink: link, backupPath }) {
@@ -305,7 +308,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
   applyBtn.addEventListener('click', async () => {
     const slug = getJobSlug();
     const suggestions = text.value.trim();
-    const attached = attachedFileNames();
+    const attached = attachedFilePaths();
     const validationError = validateClickInputs(slug, suggestions, attached);
     if (validationError) {
       if (validationError !== 'no-slug') {
