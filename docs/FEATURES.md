@@ -89,6 +89,52 @@ understand the current surface without reading the source or the git log.
   cleanup. The resume trim loop uses this so each trim attempt sees the prior
   conversation as context.
 
+## Apply suggestions to an existing resume
+
+A second-generation edit flow. After a resume is generated and stored in
+`jobs/<slug>/structured-output.json`, the user can attach files from that
+folder, write free-text suggestions, and have the model revise the resume
+JSON in place. The cover letter is **not** touched by this flow.
+
+- **UI** — a new panel below the existing buttons in `public/index.html`,
+  implemented as a self-contained ES module in `public/suggestions.js` that
+  loads its template from `public/suggestions.html`. Hidden until the current
+  tab has a `lastJobDir` (i.e. a generation has completed).
+- **Attached files** — auto-attached by default: `ats-analysis.md`,
+  `job-description.txt`, `other-input.txt`. The original
+  `structured-output.json` is always referenced by absolute path in the
+  prompt (its pill is non-removable, labelled "Original resume JSON"). A
+  search-driven "+ Add file from this job folder" button opens a popover
+  backed by `GET /generate/listJobFiles?jobDir=<slug>`, which lists every
+  non-recursive file inside the job directory. Every attached path is
+  checked server-side to make sure its realpath stays inside the job
+  directory.
+- **Backup** — before any AI call, the current `structured-output.json`,
+  `resume.pdf`, and `resume.tex` are copied to
+  `jobs/<slug>/backups/v1/` (auto-incrementing). The backup path is shown
+  in the result block. Cover letter files are not backed up by this flow.
+- **Diff check** — after the model returns, the new `structured-output.json`
+  is canonicalised (deep-equal via sorted-key JSON) and compared to the
+  on-disk version that was just backed up. A no-op result triggers one
+  retry with a follow-up instruction that tells the model it didn't change
+  anything. A second no-op surfaces a recoverable error to the UI with the
+  backup path so the user can manually revert.
+- **New opencode session** — every apply-suggestions call creates a fresh
+  opencode session (no `providedSessionId`), so each iteration has a clean
+  conversation. The session id is returned to the UI alongside an
+  "Open in OpenCode web" deep link (built from `OPENCODE_HOSTNAME` and
+  `OPENCODE_PORT`).
+- **Async** — the endpoint is `POST /generate/applySuggestions` and returns
+  `{ taskId, jobDir }` immediately; the UI polls
+  `GET /generate/task/:taskId` every 5s. On `complete` the result includes
+  `pdfUrl`, `sessionId`, `webLink`, `backupPath`, and `backupVersion`. On a
+  no-op-after-retry, the task resolves to `status: 'error'` with
+  `error: 'no-op'` and `result: { backupPath, backupVersion }` so the UI
+  can recover.
+- **Files written on success** — `structured-output.json`, `resume.tex`,
+  `resume.pdf` in the job directory (cover letter files are not
+  overwritten).
+
 ## OpenCode client lifecycle
 
 - `OPENCODE_AI_PROMPT_TIMEOUT_MS` (default 600000) caps a single

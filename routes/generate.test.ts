@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import path from 'path';
+import fs from 'fs';
+import http from 'http';
 
 const spawnSync = vi.fn();
 const existsSync = vi.fn();
@@ -9,6 +11,7 @@ const appendFileSync = vi.fn();
 const readdirSync = vi.fn();
 const statSync = vi.fn();
 const readFileSync = vi.fn();
+const realpathSync = vi.fn();
 const mkdtempSync = vi.fn();
 const rmSync = vi.fn();
 
@@ -32,6 +35,7 @@ vi.mock('fs', () => ({
     readFileSync: (...args: unknown[]) => readFileSync(...args),
     readdirSync: (...args: unknown[]) => readdirSync(...args),
     statSync: (...args: unknown[]) => statSync(...args),
+    realpathSync: (...args: unknown[]) => realpathSync(...args),
     mkdtempSync: (...args: unknown[]) => mkdtempSync(...args),
     rmSync: (...args: unknown[]) => rmSync(...args),
   },
@@ -42,6 +46,7 @@ vi.mock('fs', () => ({
   readFileSync: (...args: unknown[]) => readFileSync(...args),
   readdirSync: (...args: unknown[]) => readdirSync(...args),
   statSync: (...args: unknown[]) => statSync(...args),
+  realpathSync: (...args: unknown[]) => realpathSync(...args),
   mkdtempSync: (...args: unknown[]) => mkdtempSync(...args),
   rmSync: (...args: unknown[]) => rmSync(...args),
 }));
@@ -68,6 +73,15 @@ vi.mock('../services/ai', () => ({
   normaliseBodyParagraph: (v: any) => (Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/\n\s*\n+/) : [])),
   analyzeATSKeywordsAgainstResume: () => ({ coveragePercent: 0, includedInResume: [], missingFromResume: [], extractedFromJD: [] }),
   extractATSKeywordsFromJDViaAI: async () => [],
+}));
+
+const applySuggestionsMock = vi.fn();
+vi.mock('../services/fixSuggestionsService', () => ({
+  applySuggestions: (...args: unknown[]) => applySuggestionsMock(...args),
+  NoOpResultError: class NoOpResultError extends Error {
+    code = 'no-op';
+    constructor(public backup: unknown) { super('no-op'); }
+  },
 }));
 
 const TECTONIC_URL = 'http://localhost:4000/compile';
@@ -258,3 +272,141 @@ describe('writeSessionInfo and appendJobFile helpers', () => {
     expect(content2).not.toContain('Cover Letter Session ID:');
   });
 });
+
+describe('POST /generate/applySuggestions', () => {
+  beforeEach(() => {
+    existsSync.mockReset();
+    mkdirSync.mockReset();
+    writeFileSync.mockReset();
+    readFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    applySuggestionsMock.mockReset();
+  });
+
+  it('returns 400 when jobDir is missing', async () => {
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/applySuggestions', { userSuggestions: 'tighten summary' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'jobDir is required' });
+  });
+
+  it('returns 400 when userSuggestions is empty', async () => {
+    existsSync.mockImplementation((p: unknown) => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || p === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json');
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/applySuggestions', { jobDir: 'shopify-swe', userSuggestions: '   ' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/userSuggestions is required/);
+  });
+
+  it('returns 400 when attachedFilePaths escape the job directory', async () => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json';
+    });
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'do something',
+      attachedFilePaths: ['/etc/passwd'],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Attached file escapes job directory/);
+  });
+
+  it('returns a taskId and resolves to complete when the service succeeds', async () => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md';
+    });
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+
+    applySuggestionsMock.mockResolvedValue({
+      resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
+      pdfUrl: '/jobs/shopify-swe/resume.pdf',
+      sessionId: 'ses_apply_1',
+      backup: { version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] },
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'tighten summary',
+      attachedFilePaths: ['/tmp/opencode/fake-project-root/jobs/shopify-swe/ats-analysis.md'],
+    });
+    expect(post.status).toBe(200);
+    expect(post.body.taskId).toMatch(/^task_/);
+
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    await new Promise((r) => setTimeout(r, 50));
+    const poll2 = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(['pending', 'complete']).toContain(poll2.body.status);
+    if (poll2.body.status === 'complete') {
+      expect(poll2.body.result.pdfUrl).toBe('/jobs/shopify-swe/resume.pdf');
+      expect(poll2.body.result.sessionId).toBe('ses_apply_1');
+      expect(poll2.body.result.backupVersion).toBe(1);
+    } else {
+      await new Promise((r) => setTimeout(r, 200));
+      const poll3 = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+      expect(poll3.body.status).toBe('complete');
+      expect(poll3.body.result.sessionId).toBe('ses_apply_1');
+    }
+  });
+
+  it('resolves to error+no-op when the service throws NoOpResultError', async () => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === '/tmp/opencode/fake-project-root/jobs/shopify-swe' || s === '/tmp/opencode/fake-project-root/jobs/shopify-swe/structured-output.json';
+    });
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === '/tmp/opencode/fake-project-root/jobs/shopify-swe', isFile: () => p !== '/tmp/opencode/fake-project-root/jobs/shopify-swe' }));
+
+    const { NoOpResultError } = await import('../services/fixSuggestionsService.js');
+    applySuggestionsMock.mockRejectedValue(new (NoOpResultError as any)({ version: 1, backupDir: '/tmp/opencode/fake-project-root/jobs/shopify-swe/backups/v1', files: [] }));
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/applySuggestions', { jobDir: 'shopify-swe', userSuggestions: 'change stuff' });
+    expect(post.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.body.status).toBe('error');
+    expect(poll.body.error).toBe('no-op');
+    expect(poll.body.result.backupPath).toContain('backups/v1');
+  });
+});
+
+async function invokeRoute(router: any, method: 'get' | 'post', routePath: string, body?: any) {
+  const express = (await import('express')).default;
+  const app = express();
+  app.use(express.json());
+  app.use('/generate', router);
+  const server = http.createServer(app).listen(0);
+  const port = (server.address() as any).port;
+  const url = `http://127.0.0.1:${port}/generate${routePath}`;
+  try {
+    const result = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const req = http.request(url, {
+        method: method === 'get' ? 'GET' : 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let parsed: any = {};
+          try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text }; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    });
+    return result;
+  } finally {
+    server.close();
+  }
+}

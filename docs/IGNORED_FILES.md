@@ -8,7 +8,8 @@ The relevant `.gitignore` entries are:
 
 | Entry | Why it's ignored |
 | --- | --- |
-| `prompts/` | Prompt content is shared across apps in the parent monorepo and lives there as the source of truth. This app reads prompts at startup; the symlink or copied directory is set up out-of-band. |
+| `prompts/` | Prompt content is shared across apps in the parent monorepo and lives there as the source of truth. This app reads prompts at startup; the symlink or copied directory is set up out-of-band. The "apply suggestions" prompt (`fix-suggestions-prompt.txt`) is the only prompt that originated in this repo; if you change it, follow the same workflow as any other prompt (edit in the parent monorepo, copy/symlink into every worktree). |
+| `jobs/` | Each generation writes a timestamped subfolder under `jobs/`. Inside each, the "Apply suggestions" flow writes `backups/v1/`, `backups/v2/`, … before editing the resume. These are **user artifacts** and are intentionally not gitignored individually — they live inside the already-ignored `jobs/`. |
 | `templates`, `templates/` | `templates/` is a symlink that points at `../resume-tool/templates` in the parent monorepo layout, so the LaTeX and base-resume templates stay with the broader tool rather than being duplicated here. |
 
 ## Working in a fresh worktree

@@ -111,11 +111,51 @@ Set `OPENCODE_AI_QUEUE=false` to disable the queue entirely. Every call then run
 - Cleans up (deletes) the session in `finally`, **unless** `ownsSession: false` is set. The trim pass uses this so the outer generator owns the lifecycle.
 - Honours `OPENCODE_CLIENT_KEEPALIVE`, `OPENCODE_CLIENT_ROTATE_AFTER`, and `OPENCODE_AI_PROMPT_TIMEOUT_MS` to avoid the "Headers Timeout Error" under load (see `docs/plans/AI_PROMPT_TIMEOUT_PLAN.md` and `docs/plans/OPENCODE_SESSION_KEEP_PLAN.md`).
 
+### Apply suggestions to an existing resume
+
+A second-generation edit flow for refining an already-generated resume. After
+a generation completes, a new panel below the existing buttons in the UI
+(`public/suggestions.js` + `public/suggestions.html`) lets the user:
+
+- See which job folder is selected (read-only display, with a "Change" button
+  as an escape hatch).
+- See a list of attached file pills — `ats-analysis.md`,
+  `job-description.txt`, and `other-input.txt` are auto-attached; the
+  original `structured-output.json` is always sent as a path (non-removable
+  pill).
+- Add more files from the job folder via a search-driven popover backed by
+  `GET /generate/listJobFiles`.
+- Type free-text suggestions (max 4000 chars).
+- Click **Apply suggestions** to POST `/generate/applySuggestions` and
+  poll the task until complete.
+
+The server (`services/fixSuggestionsService.ts` + `services/backupService.ts`):
+
+1. Creates a `jobs/<slug>/backups/v1/` backup of the current resume files
+   (auto-incrementing; the existing resume is **not** touched before the
+   backup succeeds).
+2. Calls `runOpenCode` once with `prompts/fix-suggestions-prompt.txt` and
+   the user's suggestions + attached file contents + the absolute path to
+   the original `structured-output.json`. This creates a **fresh** opencode
+   session (no `providedSessionId`).
+3. Diffs the returned JSON against the on-disk version using a sorted-key
+   canonicalised deep-equal (`resumesAreEqual`). On a no-op, retries once
+   with a follow-up instruction. A second no-op surfaces a recoverable
+   error to the UI naming the backup path.
+4. On success, writes `structured-output.json`, regenerates `resume.tex`
+   and `resume.pdf` via `buildLatex` + `compilePDF`, and returns the new
+   opencode session id + an "Open in OpenCode web" link
+   (`http://${OPENCODE_HOSTNAME}:${OPENCODE_PORT}/session/<id>`).
+
+Cover letter files are **not** modified by this flow.
+
 ### Security
 
 - Input sanitization on job descriptions (Unicode, special chars)
 - Path allowlisting for file operations
 - PII redaction before any resume is sent to an AI call that judges the resume
+- `attachedFilePaths` in `applySuggestions` are checked with `realpathSync`
+  to ensure the resolved path stays inside the target job directory
 - No sensitive data sent to third-party APIs (uses local opencode + self-hosted when possible)
 - Basic auth on admin endpoints
 
