@@ -1,0 +1,54 @@
+<template id="suggestions-panel-template">
+  <section id="suggestions-section" class="suggestions hidden" aria-label="Apply suggestions to current resume">
+    <h2>Apply suggestions to current resume</h2>
+    <p class="subtitle">Pick a job folder, attach the files the model should see, and add your own suggestions. The model revises the existing resume JSON, you keep the conversation in a new OpenCode session.</p>
+
+    <div class="field">
+      <label>Job folder</label>
+      <div class="row">
+        <code id="suggestions-job-slug" class="folder-slug">(none — generate a resume first)</code>
+        <button type="button" id="suggestions-change-folder" class="button button-tiny">Change</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Attached files (sent to the model)</label>
+      <div id="suggestions-pills" class="pills" aria-live="polite"></div>
+      <div class="row" style="margin-top: 6px;">
+        <button type="button" id="suggestions-add-file" class="button button-tiny">+ Add file from this job folder</button>
+        <span class="optional" style="margin-left: 8px;">(original resume JSON is always sent by path)</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="suggestions-text">Your suggestions</label>
+      <textarea id="suggestions-text" rows="5" placeholder="e.g. Tighten the summary. Add Kafka and Terraform to skills. Rewrite the X bullet to lead with outcome."></textarea>
+    </div>
+
+    <button type="button" id="suggestions-apply-btn" class="button">Apply suggestions</button>
+    <div id="suggestions-status" class="status hidden"></div>
+
+    <div id="suggestions-result" class="result hidden">
+      <p>✅ Resume updated.</p>
+      <a id="suggestions-pdf-link" href="#" target="_blank">Open updated PDF</a>
+      <div class="row" style="margin-top: 8px;">
+        <code id="suggestions-backup-path" class="folder-path"></code>
+      </div>
+      <div id="suggestions-session-block" class="hidden" style="margin-top: 6px;">
+        New OpenCode session: <code id="suggestions-session-id"></code>
+        <button type="button" id="suggestions-session-copy" class="button-tiny">Copy</button>
+        <a id="suggestions-web-link" href="#" target="_blank" class="button-tiny" style="margin-left: 6px;">Open in OpenCode web</a>
+      </div>
+    </div>
+  </section>
+</template>
+
+<div id="suggestions-file-popover" class="popover hidden" role="dialog" aria-label="Pick a file">
+  <div class="popover-body">
+    <input type="text" id="suggestions-file-search" placeholder="Search files..." />
+    <ul id="suggestions-file-list"></ul>
+    <div class="row" style="justify-content: flex-end;">
+      <button type="button" id="suggestions-file-cancel" class="button button-tiny">Close</button>
+    </div>
+  </div>
+</div>
