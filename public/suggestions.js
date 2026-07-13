@@ -248,73 +248,92 @@ function initSuggestionsPanel({ tplContent, popover }) {
     } catch (e) { /* ignore */ }
   }
 
-  applyBtn.addEventListener('click', async () => {
-    const slug = getJobSlug();
+  function setApplyingUi(enabled) {
+    applyBtn.disabled = !enabled;
+    applyBtn.textContent = enabled ? 'Apply suggestions' : 'Applying…';
+  }
+
+  function validateClickInputs(slug, suggestions, attached) {
     if (!slug) {
       alert('Generate a resume first so a job folder is available.');
-      return;
+      return 'no-slug';
     }
-    const suggestions = text.value.trim();
-    if (!suggestions) {
-      setStatus(statusNode, 'Please enter at least one suggestion.', 'error');
-      return;
-    }
+    if (!suggestions) return 'Please enter at least one suggestion.';
     if (suggestions.length > MAX_SUGGESTIONS_LENGTH) {
-      setStatus(statusNode, `Suggestions too long (${suggestions.length} > ${MAX_SUGGESTIONS_LENGTH}).`, 'error');
-      return;
+      return `Suggestions too long (${suggestions.length} > ${MAX_SUGGESTIONS_LENGTH}).`;
     }
+    if (!attached.length) return 'Attach at least one file.';
+    return null;
+  }
+
+  async function postApplySuggestions(payload) {
+    const res = await fetch('/generate/applySuggestions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || `Server error ${res.status}`);
+    }
+    return data;
+  }
+
+  function handleApplyError(err) {
+    if (err && err.noOp) {
+      const bp = err.taskResult && err.taskResult.backupPath;
+      return {
+        message: 'Model did not change the resume (no-op after retry). Your original files are untouched. Backup saved at ' + (bp || '(unknown)'),
+        kind: 'error',
+      };
+    }
+    return { message: 'Error: ' + fmtError(err), kind: 'error' };
+  }
+
+  function handleApplySuccess(task) {
+    const r = task.result || {};
+    showResult({
+      pdfUrl: r.pdfUrl,
+      sessionId: r.sessionId,
+      webLink: r.webLink,
+      backupPath: r.backupPath,
+    });
+    setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
+    playSound('success');
+  }
+
+  applyBtn.addEventListener('click', async () => {
+    const slug = getJobSlug();
+    const suggestions = text.value.trim();
     const attached = attachedFileNames();
-    if (!attached.length) {
-      setStatus(statusNode, 'Attach at least one file.', 'error');
+    const validationError = validateClickInputs(slug, suggestions, attached);
+    if (validationError) {
+      if (validationError !== 'no-slug') {
+        setStatus(statusNode, validationError, 'error');
+      }
       return;
     }
 
-    applyBtn.disabled = true;
-    applyBtn.textContent = 'Applying…';
+    setApplyingUi(false);
     setStatus(statusNode, 'Backing up current resume and calling the model…');
     resultNode.className = 'result hidden';
 
     try {
-      const res = await fetch('/generate/applySuggestions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jobDir: slug,
-          userSuggestions: suggestions,
-          attachedFilePaths: attached,
-          modelSelect: getCurrentModel(),
-        }),
+      const { taskId } = await postApplySuggestions({
+        jobDir: slug,
+        userSuggestions: suggestions,
+        attachedFilePaths: attached,
+        modelSelect: getCurrentModel(),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || `Server error ${res.status}`);
-      }
       setStatus(statusNode, 'Model is working on your suggestions…');
-      const task = await waitForTask(data.taskId);
-      const r = task.result || {};
-      showResult({
-        pdfUrl: r.pdfUrl,
-        sessionId: r.sessionId,
-        webLink: r.webLink,
-        backupPath: r.backupPath,
-      });
-      setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
-      playSound('success');
+      const task = await waitForTask(taskId);
+      handleApplySuccess(task);
     } catch (err) {
-      if (err && err.noOp) {
-        const bp = err.taskResult && err.taskResult.backupPath;
-        setStatus(
-          statusNode,
-          'Model did not change the resume (no-op after retry). Your original files are untouched. Backup saved at ' + (bp || '(unknown)'),
-          'error'
-        );
-      } else {
-        setStatus(statusNode, 'Error: ' + fmtError(err), 'error');
-      }
+      const { message, kind } = handleApplyError(err);
+      setStatus(statusNode, message, kind);
       playSound('failure');
     } finally {
-      applyBtn.disabled = false;
-      applyBtn.textContent = 'Apply suggestions';
+      setApplyingUi(true);
     }
   });
 

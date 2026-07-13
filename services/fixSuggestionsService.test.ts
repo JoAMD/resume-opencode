@@ -176,40 +176,30 @@ describe('applySuggestions', () => {
 
   it('rejects when jobDir does not exist', async () => {
     const { resumePath } = makeFixture();
-    const { applySuggestions } = await import('./fixSuggestionsService.js');
-    await expect(
-      applySuggestions({
-        jobDir: '/tmp/opencode/does-not-exist',
-        userSuggestions: 'x',
-        attachedFiles: [],
-        resumePath,
-      })
-    ).rejects.toThrow(/jobDir does not exist/);
+    await expectApplySuggestionsRejects(
+      { jobDir: '/tmp/opencode/does-not-exist', userSuggestions: 'x', attachedFiles: [], resumePath },
+      /jobDir does not exist/
+    );
   });
 
   it('rejects when resumePath does not exist', async () => {
     const { jobDir } = makeFixture();
-    const { applySuggestions } = await import('./fixSuggestionsService.js');
-    await expect(
-      applySuggestions({
-        jobDir,
-        userSuggestions: 'x',
-        attachedFiles: [],
-        resumePath: path.join(jobDir, 'nope.json'),
-      })
-    ).rejects.toThrow(/resumePath does not exist/);
+    await expectApplySuggestionsRejects(
+      { jobDir, userSuggestions: 'x', attachedFiles: [], resumePath: path.join(jobDir, 'nope.json') },
+      /resumePath does not exist/
+    );
   });
 
   it('rejects when userSuggestions is empty', async () => {
     const { jobDir, resumePath } = makeFixture();
-    const { applySuggestions } = await import('./fixSuggestionsService.js');
-    await expect(
-      applySuggestions({
-        jobDir,
-        userSuggestions: '   ',
-        attachedFiles: [],
-        resumePath,
-      })
-    ).rejects.toThrow(/userSuggestions is required/);
+    await expectApplySuggestionsRejects(
+      { jobDir, userSuggestions: '   ', attachedFiles: [], resumePath },
+      /userSuggestions is required/
+    );
   });
 });
+
+async function expectApplySuggestionsRejects(input: Record<string, unknown>, matcher: RegExp) {
+  const { applySuggestions } = await import('./fixSuggestionsService.js');
+  await expect(applySuggestions(input as any)).rejects.toThrow(matcher);
+}
