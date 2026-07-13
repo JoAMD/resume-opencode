@@ -250,6 +250,7 @@ export async function applySuggestions(input: ApplySuggestionsInput): Promise<Ap
   const currentResumeJson = JSON.parse(safeReadFile(input.resumePath));
   const fileContents = resolveAttachedFileMap(input.attachedFiles);
   const promptLogDir = input.promptLogDir || path.join(input.jobDir, 'prompt-logs', 'fix-suggestions');
+  fs.mkdirSync(promptLogDir, { recursive: true });
   const userContent = buildUserContent(input, fileContents)
     .replace(RESUME_PATH_PLACEHOLDER, input.resumePath);
 

@@ -159,6 +159,27 @@ describe('applySuggestions', () => {
     expect(fs.readFileSync(resumePath, 'utf8')).toContain('"summary": "Original summary"');
   });
 
+  it('creates the promptLogDir under the job folder before calling runOpenCode', async () => {
+    const { jobDir, resumePath } = makeFixture();
+    const updated = JSON.parse(JSON.stringify(RESUME_BASE));
+    updated.skills.libraries = 'Jest';
+    runOpenCodeMock.mockResolvedValueOnce({ structured: updated, sessionId: 'ses_logdir' });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    await applySuggestions({
+      jobDir,
+      userSuggestions: 'x',
+      attachedFiles: [],
+      resumePath,
+    });
+
+    const expectedDir = path.join(jobDir, 'prompt-logs', 'fix-suggestions');
+    expect(fs.existsSync(expectedDir)).toBe(true);
+    expect(runOpenCodeMock).toHaveBeenCalled();
+    const callOpts = runOpenCodeMock.mock.calls[0][0];
+    expect(callOpts.promptLogDir).toBe(expectedDir);
+  });
+
   it('throws InvalidResponseError when the model returns garbage', async () => {
     const { jobDir, resumePath } = makeFixture();
     runOpenCodeMock.mockResolvedValueOnce({ structured: null, sessionId: 'ses_bad' });
