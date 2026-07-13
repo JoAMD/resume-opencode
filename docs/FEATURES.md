@@ -68,14 +68,19 @@ understand the current surface without reading the source or the git log.
 
 ## Duplicate guard
 
-- `findApplications({ link?, company?, role? })` — link match wins; if no link
-  matches and both `company` and `role` are supplied, it falls back to
-  case-insensitive `company+role` match.
-- `POST /generate` returns `409` with the matched row when a duplicate is
-  found; the UI prompts the user to confirm or cancel, and the request can be
-  retried with `force: true` to override.
-- `GET /generate/checkDuplicate?link=…&company=…&role=…` remains available for
-  ad-hoc lookups.
+- `findApplications({ link?, company?, role? })` runs three independent
+  checks in priority order: exact `link`, then case-insensitive
+  `company+role`, then `company` alone. Link and `company+role` matches are
+  exact duplicates; a `company`-only match is reported as a **partial match**
+  (`matchedBy: 'company'`, `partialMatch: true`) because it likely indicates
+  a different role at the same company.
+- `POST /generate` returns `409` with the matched row on any duplicate
+  signal (including partial). The UI prompts the user with
+  "this looks like a possible duplicate (partial match)" wording for partial
+  hits, and the request can be retried with `force: true` to override either
+  kind of conflict.
+- `GET /generate/checkDuplicate?link=…&company=…&role=…` remains available
+  for ad-hoc lookups and also returns `partialMatch` in its response.
 
 ## OpenCode session reuse (for trim reprompts)
 

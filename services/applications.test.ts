@@ -163,6 +163,7 @@ describe('findApplications', () => {
   it('matches by exact link', () => {
     const result = findApplications({ link: 'https://seek.example/job/2' });
     expect(result?.matchedBy).toBe('link');
+    expect(result?.partialMatch).toBe(false);
     expect(result?.row.job_dir).toBe('globex-1');
   });
 
@@ -173,6 +174,7 @@ describe('findApplications', () => {
       role: 'senior engineer',
     });
     expect(result?.matchedBy).toBe('company-role');
+    expect(result?.partialMatch).toBe(false);
     expect(result?.row.job_dir).toBe('acme-1');
   });
 
@@ -183,6 +185,27 @@ describe('findApplications', () => {
       role: 'Junior Engineer',
     });
     expect(result?.matchedBy).toBe('link');
+    expect(result?.partialMatch).toBe(false);
+    expect(result?.row.job_dir).toBe('acme-1');
+  });
+
+  it('returns company-only partial match when role differs', () => {
+    const result = findApplications({
+      company: 'acme pty ltd',
+      role: 'Staff Engineer',
+    });
+    expect(result?.matchedBy).toBe('company');
+    expect(result?.partialMatch).toBe(true);
+    expect(result?.row.job_dir).toBe('acme-1');
+  });
+
+  it('company+role exact match wins over company-only partial match', () => {
+    const result = findApplications({
+      company: 'Acme Pty Ltd',
+      role: 'Senior Engineer',
+    });
+    expect(result?.matchedBy).toBe('company-role');
+    expect(result?.partialMatch).toBe(false);
     expect(result?.row.job_dir).toBe('acme-1');
   });
 

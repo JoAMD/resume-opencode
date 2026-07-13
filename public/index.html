@@ -325,9 +325,18 @@
       const when = row.applied_at || '(unknown)';
       const who = row.company || fallback.company || '';
       const what = row.role || fallback.role || '';
-      const matchedBy = data && data.matchedBy === 'link' ? 'link' : 'company + role';
+      const partialMatch = !!(data && data.partialMatch);
+      const matchedBy =
+        data && data.matchedBy === 'link'
+          ? 'link'
+          : data && data.matchedBy === 'company'
+            ? 'company (partial match — different role)'
+            : 'company + role';
+      const heading = partialMatch
+        ? `This looks like a possible duplicate (partial match).`
+        : `This looks like a job you've already applied to.`;
       return (
-        `This looks like a job you've already applied to.\n` +
+        `${heading}\n` +
         `  Matched by: ${matchedBy}\n` +
         `  Applied at: ${when}\n` +
         `  Company:   ${who}\n` +

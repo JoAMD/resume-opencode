@@ -165,8 +165,9 @@ export interface FindInput {
 }
 
 export interface FindResult {
-  matchedBy: 'link' | 'company-role';
+  matchedBy: 'link' | 'company-role' | 'company';
   row: ApplicationRow;
+  partialMatch: boolean;
 }
 
 function matchByLink(rows: ApplicationRow[], link: string): ApplicationRow | null {
@@ -179,18 +180,46 @@ function matchByCompanyRole(rows: ApplicationRow[], company: string, role: strin
   return rows.find((r) => r.company.trim().toLowerCase() === lcCompany && r.role.trim().toLowerCase() === lcRole) ?? null;
 }
 
+function matchByCompany(rows: ApplicationRow[], company: string): ApplicationRow | null {
+  const lcCompany = company.toLowerCase();
+  return rows.find((r) => r.company.trim().toLowerCase() === lcCompany) ?? null;
+}
+
+type CheckResult = { matchedBy: FindResult['matchedBy']; row: ApplicationRow; partialMatch: boolean } | null;
+
+function checkByLink(rows: ApplicationRow[], link?: string): CheckResult {
+  if (!link) return null;
+  const row = matchByLink(rows, link);
+  return row ? { matchedBy: 'link', row, partialMatch: false } : null;
+}
+
+function checkByCompanyRole(rows: ApplicationRow[], company?: string, role?: string): CheckResult {
+  if (!company || !role) return null;
+  const row = matchByCompanyRole(rows, company, role);
+  return row ? { matchedBy: 'company-role', row, partialMatch: false } : null;
+}
+
+function checkByCompany(rows: ApplicationRow[], company?: string): CheckResult {
+  if (!company) return null;
+  const row = matchByCompany(rows, company);
+  return row ? { matchedBy: 'company', row, partialMatch: true } : null;
+}
+
 export function findApplications(input: FindInput): FindResult | null {
   const rows = readApplications();
   const link = input.link?.trim();
-  if (link) {
-    const match = matchByLink(rows, link);
-    if (match) return { matchedBy: 'link', row: match };
-  }
   const company = input.company?.trim();
   const role = input.role?.trim();
-  if (!company || !role) return null;
-  const match = matchByCompanyRole(rows, company, role);
-  return match ? { matchedBy: 'company-role', row: match } : null;
+  const checks = [
+    () => checkByLink(rows, link),
+    () => checkByCompanyRole(rows, company, role),
+    () => checkByCompany(rows, company),
+  ];
+  for (const check of checks) {
+    const result = check();
+    if (result) return result;
+  }
+  return null;
 }
 
 export function writeLinkToJobDir(jobDirPath: string, link: string): void {

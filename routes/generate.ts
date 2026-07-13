@@ -233,7 +233,7 @@ router.get('/task/:taskId', (req, res) => {
 
 function hasLookupCriteria(body: GenerateRequestBody): boolean {
   if (body.link?.trim()) return true;
-  return !!(body.companyName?.trim() && body.roleName?.trim());
+  return !!body.companyName?.trim();
 }
 
 function findExistingApplication(body: GenerateRequestBody) {
@@ -245,7 +245,7 @@ function findExistingApplication(body: GenerateRequestBody) {
   });
 }
 
-function duplicateConflictResponse(body: GenerateRequestBody): { matchedBy: 'link' | 'company-role'; row: ApplicationRow } | null {
+function duplicateConflictResponse(body: GenerateRequestBody): { matchedBy: 'link' | 'company-role' | 'company'; row: ApplicationRow; partialMatch: boolean } | null {
   if (body.force) return null;
   const existing = findExistingApplication(body);
   if (!existing) return null;
@@ -267,6 +267,7 @@ router.post('/', async (req, res) => {
     res.status(409).json({
       error: 'duplicate-application',
       matchedBy: conflict.matchedBy,
+      partialMatch: conflict.partialMatch,
       row: conflict.row,
     });
     return;
@@ -435,23 +436,29 @@ function readDuplicateQuery(req: Request): { link?: string; company?: string; ro
 
 function hasUsableDuplicateQuery(q: { link?: string; company?: string; role?: string }): boolean {
   if (q.link?.trim()) return true;
-  return !!(q.company?.trim() && q.role?.trim());
+  return !!q.company?.trim();
 }
 
 router.get('/checkDuplicate', (req, res) => {
   try {
     const query = readDuplicateQuery(req);
     if (!hasUsableDuplicateQuery(query)) {
-      res.json({ duplicate: false, matchedBy: null, row: null, checked: false });
+      res.json({ duplicate: false, matchedBy: null, partialMatch: false, row: null, checked: false });
       return;
     }
 
     const match = findApplications(query);
     if (!match) {
-      res.json({ duplicate: false, matchedBy: null, row: null, checked: true });
+      res.json({ duplicate: false, matchedBy: null, partialMatch: false, row: null, checked: true });
       return;
     }
-    res.json({ duplicate: true, matchedBy: match.matchedBy, row: match.row, checked: true });
+    res.json({
+      duplicate: true,
+      matchedBy: match.matchedBy,
+      partialMatch: match.partialMatch,
+      row: match.row,
+      checked: true,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Check duplicate error:', err);

@@ -93,8 +93,8 @@ applied_at,company,role,link,status,notes,job_dir
 
 - `applied_at` is local time (`YYYY-MM-DD HH:MM:SS`, host TZ) so the file is human-friendly when opened in a spreadsheet.
 - `appendApplication` is idempotent on `job_dir` — re-clicking "mark applied" does not double-append.
-- `findApplications({ link?, company?, role? })` is the duplicate lookup. Link match wins; if no link matches and both `company` and `role` are supplied, it falls back to case-insensitive `company+role` match.
-- The UI now wires a **pre-generation duplicate check**: when a `link` is present (or both `company` and `role` are), the server returns `409` with the matched row, and the UI prompts the user to confirm or cancel. The original request can be retried with `force: true` to override.
+- `findApplications({ link?, company?, role? })` is the duplicate lookup. It runs link, then `company+role`, then `company`-alone checks independently. Link and `company+role` matches are exact duplicates; a `company`-only match is a **partial match** (`matchedBy: 'company'`, `partialMatch: true`) — likely a different role at the same company.
+- The UI now wires a **pre-generation duplicate check**: when a `link` is present, or a `company` is supplied, the server returns `409` with the matched row, and the UI prompts the user to confirm or cancel. The alert text says "partial match" when only the company matched. The original request can be retried with `force: true` to override.
 - `GET /generate/checkDuplicate` remains available for ad-hoc lookups (e.g. a future "is this URL in my applications?" button).
 
 ### Per-model AI concurrency
