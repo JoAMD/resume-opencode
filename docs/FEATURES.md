@@ -105,6 +105,14 @@ above — it is an ad-hoc tool, not part of the `POST /generate` gate.
 - Files scanned per folder: `job-description.txt` and `full-jd.txt` (only
   the ones that exist). A single folder can produce up to two hits, one
   per file, so the UI can show both.
+- Folder discovery recurses **one level** into `jobs/<group>/<slug>/` so
+  archived subtrees like `jobs/previous/` are searchable too. A top-level
+  entry is only treated as a "group" (and recursed into) when it has no
+  JD files at its root — folders that *do* have JD files are job folders
+  themselves, and their children are ignored. Each hit's `rootName`
+  carries the group name (e.g. `previous`) so the UI can show
+  `previous/(applied) ...` and link to the right path. Recursion is
+  bounded at depth 1, so `jobs/<a>/<b>/<c>/` stays invisible.
 - Each hit includes `jobDir`, `matchedFile`, a ~120-char `snippet` centred
   on the first match, and `mtimeMs` (used for "newer first" sort).
 - Results are sorted by mtimeMs descending (most recent first) and capped

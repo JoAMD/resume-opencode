@@ -33,6 +33,24 @@ function makeJobDir(slug: string, opts: { jd?: string; fullJd?: string; mtimeMs?
   return dir;
 }
 
+function makeNestedJobDir(group: string, slug: string, opts: { jd?: string; fullJd?: string; mtimeMs?: number } = {}): string {
+  const dir = path.join(jobsDir, group, slug);
+  fs.mkdirSync(dir, { recursive: true });
+  if (opts.jd !== undefined) {
+    fs.writeFileSync(path.join(dir, 'job-description.txt'), opts.jd, 'utf8');
+  }
+  if (opts.fullJd !== undefined) {
+    fs.writeFileSync(path.join(dir, 'full-jd.txt'), opts.fullJd, 'utf8');
+  }
+  if (opts.mtimeMs !== undefined) {
+    const targets = [path.join(dir, 'job-description.txt'), path.join(dir, 'full-jd.txt')];
+    for (const t of targets) {
+      if (fs.existsSync(t)) fs.utimesSync(t, new Date(opts.mtimeMs), new Date(opts.mtimeMs));
+    }
+  }
+  return dir;
+}
+
 beforeEach(() => {
   if (fs.existsSync(jobsDir)) {
     for (const entry of fs.readdirSync(jobsDir)) {
@@ -208,5 +226,76 @@ describe('searchJobDescriptions — limit + ordering', () => {
     const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
     expect(hits[0].jobDir).toBe('newer');
     expect(hits[1].jobDir).toBe('older');
+  });
+});
+
+describe('searchJobDescriptions — depth-1 recursion (jobs/<group>/<slug>/)', () => {
+  it('finds JD content under jobs/<group>/<slug>/job-description.txt', () => {
+    makeNestedJobDir('previous', 'a', { jd: 'software engineer wanted' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].jobDir).toBe('a');
+    expect(hits[0].rootName).toBe('previous');
+    expect(hits[0].matchedFile).toBe('job-description.txt');
+  });
+
+  it('tags top-level hits with no rootName and nested hits with the group name', () => {
+    makeJobDir('top', { jd: 'software engineer' });
+    makeNestedJobDir('previous', 'nested', { jd: 'software engineer' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(2);
+    const top = hits.find((h) => h.jobDir === 'top');
+    const nested = hits.find((h) => h.jobDir === 'nested');
+    expect(top?.rootName).toBeUndefined();
+    expect(nested?.rootName).toBe('previous');
+  });
+
+  it('does NOT recurse into a subdir that already has JD files (it is a job folder)', () => {
+    makeJobDir('looks-like-group', { jd: 'senior engineer wanted' });
+    fs.mkdirSync(path.join(jobsDir, 'looks-like-group', 'inner'), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, 'looks-like-group', 'inner', 'job-description.txt'), 'software', 'utf8');
+    const hits = searchJobDescriptions({ text: 'senior', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].jobDir).toBe('looks-like-group');
+    expect(hits[0].rootName).toBeUndefined();
+    const innerHits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(innerHits).toEqual([]);
+  });
+
+  it('does NOT recurse beyond depth 1 (jobs/<a>/<b>/<c>/ is invisible)', () => {
+    makeNestedJobDir('group', 'leaf', { jd: 'surface level' });
+    const deeper = path.join(jobsDir, 'group', 'leaf', 'deeper');
+    fs.mkdirSync(deeper, { recursive: true });
+    fs.writeFileSync(path.join(deeper, 'job-description.txt'), 'software engineer hidden', 'utf8');
+    const hits = searchJobDescriptions({ text: 'hidden', mode: 'all-words-AND', jobsDir });
+    expect(hits).toEqual([]);
+  });
+
+  it('searches both job-description.txt and full-jd.txt under a grouped folder', () => {
+    makeNestedJobDir('previous', 'a', { jd: 'short jd no match', fullJd: 'long jd with software mention' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].matchedFile).toBe('full-jd.txt');
+    expect(hits[0].jobDir).toBe('a');
+    expect(hits[0].rootName).toBe('previous');
+  });
+
+  it('mixed top-level + nested folders are merged in the same result list', () => {
+    makeJobDir('top', { jd: 'software engineer alpha' });
+    makeNestedJobDir('archive', 'old-1', { jd: 'software engineer beta' });
+    makeNestedJobDir('archive', 'old-2', { jd: 'software engineer gamma' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    const byFolder = new Map(hits.map((h) => [h.jobDir, h]));
+    expect(byFolder.get('top')?.rootName).toBeUndefined();
+    expect(byFolder.get('old-1')?.rootName).toBe('archive');
+    expect(byFolder.get('old-2')?.rootName).toBe('archive');
+  });
+
+  it('empty subdir under a group is silently skipped', () => {
+    fs.mkdirSync(path.join(jobsDir, 'previous', 'empty'), { recursive: true });
+    makeNestedJobDir('previous', 'real', { jd: 'software engineer' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].jobDir).toBe('real');
   });
 });
