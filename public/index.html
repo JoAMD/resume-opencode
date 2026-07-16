@@ -146,8 +146,8 @@
         <div class="field">
           <label for="jd-search-mode">Mode</label>
           <select id="jd-search-mode">
-            <option value="all-words-AND" selected>All words (AND)</option>
-            <option value="exact-substring">Exact substring</option>
+            <option value="all-words-AND">All words (AND)</option>
+            <option value="exact-substring" selected>Exact substring</option>
           </select>
         </div>
       </div>
@@ -715,11 +715,15 @@
           const meta = document.createElement('div');
           meta.className = 'jd-search-hit-meta';
 
+          const pathParts = [hit.jobDir];
+          if (hit.rootName) pathParts.unshift(hit.rootName);
+          const href = `/jobs/${pathParts.map(encodeURIComponent).join('/')}/${hit.matchedFile}`;
+
           const link = document.createElement('a');
-          link.href = `/jobs/${encodeURIComponent(hit.jobDir)}/${hit.matchedFile}`;
+          link.href = href;
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
-          link.textContent = hit.jobDir;
+          link.textContent = pathParts.join('/');
           meta.appendChild(link);
 
           const fileLabel = document.createElement('span');

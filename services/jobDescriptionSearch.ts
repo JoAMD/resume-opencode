@@ -12,6 +12,13 @@ export interface SearchHit {
   matchedFile: SearchedFile;
   snippet: string;
   mtimeMs: number;
+  rootName?: string;
+}
+
+interface JobEntry {
+  folder: string;
+  root: string;
+  rootName: string;
 }
 
 export interface SearchInput {
@@ -93,31 +100,79 @@ function evaluateFile(
 }
 
 function tryHit(
-  jobsDir: string,
-  folder: string,
+  entry: JobEntry,
   file: SearchedFile,
   mode: SearchMode,
   query: string,
   tokens: string[]
 ): SearchHit | null {
-  const filePath = path.join(jobsDir, folder, file);
+  const filePath = path.join(entry.root, entry.folder, file);
   if (!fs.existsSync(filePath)) return null;
   const stat = fs.statSync(filePath);
   if (!stat.isFile()) return null;
   const content = fs.readFileSync(filePath, 'utf8');
   const { matches, snippet } = evaluateFile(content, mode, query, tokens);
   if (!matches) return null;
-  return {
-    jobDir: folder,
+  const hit: SearchHit = {
+    jobDir: entry.folder,
     matchedFile: file,
     snippet,
     mtimeMs: stat.mtimeMs,
   };
+  if (entry.rootName) hit.rootName = entry.rootName;
+  return hit;
+}
+
+function isJobFolder(root: string, folder: string): boolean {
+  return (
+    fs.existsSync(path.join(root, folder, 'job-description.txt')) ||
+    fs.existsSync(path.join(root, folder, 'full-jd.txt'))
+  );
+}
+
+function listChildDirs(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      out.push(entry.name);
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      const target = path.join(root, entry.name);
+      try {
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) out.push(entry.name);
+      } catch {
+        // broken symlink or unreadable target — skip silently
+      }
+    }
+  }
+  return out;
+}
+
+function discoverEntries(jobsDir: string): JobEntry[] {
+  const top = listChildDirs(jobsDir);
+  const entries: JobEntry[] = [];
+  for (const name of top) {
+    const full = path.join(jobsDir, name);
+    if (isJobFolder(jobsDir, name)) {
+      entries.push({ folder: name, root: jobsDir, rootName: '' });
+      continue;
+    }
+    for (const child of listChildDirs(full)) {
+      if (isJobFolder(full, child)) {
+        entries.push({ folder: child, root: full, rootName: name });
+      }
+    }
+  }
+  return entries;
 }
 
 export function searchJobDescriptions(input: SearchInput): SearchHit[] {
   const text = (input.text ?? '').trim();
-  const mode: SearchMode = input.mode ?? 'all-words-AND';
+  const mode: SearchMode = input.mode ?? 'exact-substring';
   const query = text.toLowerCase();
   const tokens = text.split(/\s+/).filter((t) => t.length > 0).map((t) => t.toLowerCase());
   const limit = clampLimit(input.limit);
@@ -126,15 +181,13 @@ export function searchJobDescriptions(input: SearchInput): SearchHit[] {
   if (!query) return [];
   if (!fs.existsSync(jobsDir)) return [];
 
-  const folders = fs.readdirSync(jobsDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const entries = discoverEntries(jobsDir);
 
   const hits: SearchHit[] = [];
-  for (const folder of folders) {
-    const a = tryHit(jobsDir, folder, 'job-description.txt', mode, query, tokens);
+  for (const entry of entries) {
+    const a = tryHit(entry, 'job-description.txt', mode, query, tokens);
     if (a) hits.push(a);
-    const b = tryHit(jobsDir, folder, 'full-jd.txt', mode, query, tokens);
+    const b = tryHit(entry, 'full-jd.txt', mode, query, tokens);
     if (b) hits.push(b);
   }
 

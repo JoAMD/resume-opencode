@@ -482,7 +482,7 @@ function readSearchByDescriptionQuery(req: Request): {
   const rawMode = typeof req.query.mode === 'string' ? req.query.mode : '';
   const mode: SearchMode = (SEARCH_MODES as readonly string[]).includes(rawMode)
     ? (rawMode as SearchMode)
-    : 'all-words-AND';
+    : 'exact-substring';
   const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
   const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
   return { text, mode, limit };
