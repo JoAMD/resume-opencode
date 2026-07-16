@@ -1354,6 +1354,11 @@ function buildResumeSearchText(resume: ResumeData): string {
   ].filter(Boolean).join(' '));
 }
 
+const ATS_KEYWORD_EXTRACTION_JSON_SCHEMA = {
+  type: "array",
+  items: { type: "string" },
+};
+
 export async function extractATSKeywordsFromJDViaAI(
   jobDescription: string
 ): Promise<string[]> {
@@ -1364,24 +1369,14 @@ export async function extractATSKeywordsFromJDViaAI(
   }
 
   try {
-    const sdk = await getSdk();
-    const client = sdk.createOpencodeClient({
-      serverUrl: process.env.OPENCODE_SERVER_URL || 'https://api.opencode.ai',
-      auth: getAuthHeader(),
-    });
+    const result = await enqueueAIRequest(OPENCODE_MODEL, () => runOpenCode({
+      systemPrompt: ATS_KEYWORD_EXTRACTION_PROMPT(),
+      userContent: `JOB DESCRIPTION:\n${sanitizedJD}`,
+      model: OPENCODE_MODEL,
+      jsonSchema: ATS_KEYWORD_EXTRACTION_JSON_SCHEMA,
+    }));
 
-    const result = await client.chat.completions.create({
-      model: 'openai/gpt-4o',
-      temperature: 0.3,
-      messages: [
-        { role: 'system', content: ATS_KEYWORD_EXTRACTION_PROMPT() },
-        { role: 'user', content: `JOB DESCRIPTION:\n${sanitizedJD}` },
-      ],
-    });
-
-    const raw = result.choices[0]?.message?.content?.trim() ?? '';
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-    const parsed = JSON.parse(cleaned);
+    const parsed = result.structured;
     if (!Array.isArray(parsed)) {
       return [];
     }
@@ -1389,7 +1384,8 @@ export async function extractATSKeywordsFromJDViaAI(
       .filter((k: unknown) => typeof k === 'string' && k.trim().length > 0)
       .map((k: string) => k.trim().toLowerCase())
       .sort((a: string, b: string) => a.localeCompare(b));
-  } catch {
+  } catch (err) {
+    logError('extractATSKeywordsFromJDViaAI failed:', err);
     return [];
   }
 }

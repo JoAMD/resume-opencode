@@ -132,7 +132,7 @@ async function resolveFinalKeywords(args: {
   jobDescription: string | undefined;
 }): Promise<{ keywords: string[]; missingJd: boolean }> {
   const fromSources = pickKeywords(args.input, args.folderCtx);
-  if (fromSources.length) return { keywords: fromSources, missingJd: false };
+  // if (fromSources.length) return { keywords: fromSources, missingJd: false };
   log('Extracting atsKeywords from JD via AI');
   const fromJD = await extractKeywordsIfMissing(args.jobDescription);
   return { keywords: fromJD, missingJd: !args.jobDescription?.trim() };
@@ -158,7 +158,7 @@ export async function runATSAnalysis(input: ATSAnalysisInput): Promise<ATSAnalys
     if (missingJd) {
       return { result: null, error: 'No job description available. Provide atsKeywordsFromAI or ensure job-description.txt exists in folderPath.' };
     }
-    return { result: buildEmptyResult(folderCtx?.resolvedPath) };
+    // return { result: buildEmptyResult(folderCtx?.resolvedPath) };
   }
 
   const analysis = await runAiWithRegexFallback({
