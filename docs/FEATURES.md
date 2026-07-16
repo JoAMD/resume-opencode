@@ -99,9 +99,9 @@ above — it is an ad-hoc tool, not part of the `POST /generate` gate.
   - `all-words-AND` — splits `text` on whitespace and requires every token
     to appear in the file. Mirrors the `rg "software"` workflow: paste a
     few words, find every past JD that mentions all of them.
-  - `exact-substring` — treats `text` as one literal phrase and matches if
-    it appears verbatim. Use this for "I remember seeing this exact
-    sentence" lookups.
+  - `exact-substring` (default) — treats `text` as one literal phrase and
+    matches if it appears verbatim. Use this for "I remember seeing this
+    exact sentence" lookups.
 - Files scanned per folder: `job-description.txt` and `full-jd.txt` (only
   the ones that exist). A single folder can produce up to two hits, one
   per file, so the UI can show both.

@@ -23,11 +23,11 @@ this is a separate ad-hoc lookup tool.
 1. Search every `jobs/<slug>/` folder's `job-description.txt` (and
    `full-jd.txt` when present) for text the user types.
 2. Support two modes from the same input box, switchable in the UI:
-   - `all-words-AND` (default) — every whitespace-separated word must appear
-     in the file. Mirrors the `rg "software"` workflow.
-   - `exact-substring` — the input is treated as one literal phrase
-     (case-insensitive). Mirrors "type a sentence and find a job that says
-     this".
+   - `exact-substring` (default) — the input is treated as one literal
+     phrase (case-insensitive). Mirrors "type a sentence and find a job
+     that says this".
+   - `all-words-AND` — every whitespace-separated word must appear in
+     the file. Mirrors the `rg "software"` workflow.
 3. Return a small context snippet per match so the user can see *why* it
    matched without opening the folder.
 4. Surface the tool in the existing main page as a compact panel so it sits
@@ -95,11 +95,11 @@ show both when the long-form and short-form diverge.
 
 ### Match semantics
 
+- `exact-substring` (default): lowercase both input and content, require
+  `content.includes(text)`. Empty input → no match.
 - `all-words-AND`: split `text.trim()` on whitespace, drop empties. Every
   token must appear in the file's lowercased content. Empty token list →
   no match (treated as no-op, same as empty text).
-- `exact-substring`: lowercase both input and content, require
-  `content.includes(text)`. Empty input → no match.
 
 ### Snippet
 
@@ -133,7 +133,7 @@ Response:
 ```json
 {
   "matches": [ { "jobDir": "...", "matchedFile": "...", "snippet": "...", "mtimeMs": 0 } ],
-  "mode": "all-words-AND",
+  "mode": "exact-substring",
   "text": "software engineer",
   "count": 12
 }

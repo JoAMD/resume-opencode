@@ -67,6 +67,16 @@ describe('SEARCH_MODES', () => {
   });
 });
 
+describe('searchJobDescriptions — default mode', () => {
+  it('defaults to exact-substring: a sentence only matches as a literal phrase', () => {
+    makeJobDir('hit', { jd: 'We need a senior software engineer with cloud experience.' });
+    makeJobDir('miss', { jd: 'Senior then software then engineer, but not together.' });
+    // no `mode` in the call — must use the default
+    const hits = searchJobDescriptions({ text: 'senior software engineer', jobsDir });
+    expect(hits.map((h) => h.jobDir)).toEqual(['hit']);
+  });
+});
+
 describe('searchJobDescriptions — guards', () => {
   it('returns [] for empty text', () => {
     makeJobDir('a', { jd: 'software engineer' });
@@ -297,5 +307,39 @@ describe('searchJobDescriptions — depth-1 recursion (jobs/<group>/<slug>/)', (
     const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
     expect(hits).toHaveLength(1);
     expect(hits[0].jobDir).toBe('real');
+  });
+
+  it('walks through a top-level symlink whose target is a directory tree', () => {
+    // External corpus
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'jd-search-external-'));
+    const externalJob = path.join(external, 'external-job');
+    fs.mkdirSync(externalJob, { recursive: true });
+    fs.writeFileSync(path.join(externalJob, 'job-description.txt'), 'software engineer wanted', 'utf8');
+
+    // Symlink it into the jobs dir
+    const linkPath = path.join(jobsDir, '_external_jobs');
+    try { fs.unlinkSync(linkPath); } catch { /* fresh dir per test */ }
+    fs.symlinkSync(external, linkPath, 'dir');
+
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].jobDir).toBe('external-job');
+    expect(hits[0].rootName).toBe('_external_jobs');
+
+    // Cleanup
+    fs.unlinkSync(linkPath);
+    fs.rmSync(external, { recursive: true, force: true });
+  });
+
+  it('ignores a broken symlink under jobsDir', () => {
+    const linkPath = path.join(jobsDir, '_broken');
+    try { fs.unlinkSync(linkPath); } catch { /* fresh dir per test */ }
+    fs.symlinkSync('/nonexistent/path/that/does/not/exist', linkPath, 'dir');
+
+    makeJobDir('real', { jd: 'software engineer' });
+    const hits = searchJobDescriptions({ text: 'software', mode: 'all-words-AND', jobsDir });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].jobDir).toBe('real');
+    fs.unlinkSync(linkPath);
   });
 });

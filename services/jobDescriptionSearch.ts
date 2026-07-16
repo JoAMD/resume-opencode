@@ -132,9 +132,24 @@ function isJobFolder(root: string, folder: string): boolean {
 
 function listChildDirs(root: string): string[] {
   if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      out.push(entry.name);
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      const target = path.join(root, entry.name);
+      try {
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) out.push(entry.name);
+      } catch {
+        // broken symlink or unreadable target — skip silently
+      }
+    }
+  }
+  return out;
 }
 
 function discoverEntries(jobsDir: string): JobEntry[] {
@@ -157,7 +172,7 @@ function discoverEntries(jobsDir: string): JobEntry[] {
 
 export function searchJobDescriptions(input: SearchInput): SearchHit[] {
   const text = (input.text ?? '').trim();
-  const mode: SearchMode = input.mode ?? 'all-words-AND';
+  const mode: SearchMode = input.mode ?? 'exact-substring';
   const query = text.toLowerCase();
   const tokens = text.split(/\s+/).filter((t) => t.length > 0).map((t) => t.toLowerCase());
   const limit = clampLimit(input.limit);
