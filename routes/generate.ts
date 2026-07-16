@@ -11,6 +11,11 @@ import { compilePDF } from '../services/compiler';
 import { compilePDFViaTectonic } from '../services/texCompiler';
 import { findProjectRoot } from '../services/paths';
 import { appendApplication, findApplications, writeLinkToJobDir, type ApplicationRow } from '../services/applications';
+import {
+  searchJobDescriptions,
+  SEARCH_MODES,
+  type SearchMode,
+} from '../services/jobDescriptionSearch';
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 
@@ -464,6 +469,44 @@ router.get('/checkDuplicate', (req, res) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Check duplicate error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
+function readSearchByDescriptionQuery(req: Request): {
+  text: string;
+  mode: SearchMode;
+  limit: number;
+} {
+  const text = typeof req.query.text === 'string' ? req.query.text : '';
+  const rawMode = typeof req.query.mode === 'string' ? req.query.mode : '';
+  const mode: SearchMode = (SEARCH_MODES as readonly string[]).includes(rawMode)
+    ? (rawMode as SearchMode)
+    : 'all-words-AND';
+  const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
+  const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+  return { text, mode, limit };
+}
+
+router.get('/searchByDescription', (req, res) => {
+  try {
+    const { text, mode, limit } = readSearchByDescriptionQuery(req);
+    if (!SEARCH_MODES.includes(mode)) {
+      res.status(400).json({
+        error: `Unknown mode "${mode}". Expected one of: ${SEARCH_MODES.join(', ')}.`,
+      });
+      return;
+    }
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) {
+      res.json({ matches: [], mode, text: trimmed, count: 0 });
+      return;
+    }
+    const matches = searchJobDescriptions({ text: trimmed, mode, jobsDir, limit });
+    res.json({ matches, mode, text: trimmed, count: matches.length });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal server error';
+    logError('Search by description error:', err);
     res.status(500).json({ error: message });
   }
 });

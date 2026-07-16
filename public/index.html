@@ -135,6 +135,26 @@
 
     <div id="status" class="status hidden"></div>
 
+    <section id="jd-search-panel" class="jd-search">
+      <h2>Search past JDs</h2>
+      <p class="subtitle">Look for a few words (or a short sentence) across every job folder's <code>job-description.txt</code> and <code>full-jd.txt</code>.</p>
+      <div class="row two-col">
+        <div class="field">
+          <label for="jd-search-text">Search text</label>
+          <input type="text" id="jd-search-text" placeholder="e.g. senior software engineer adelaide" />
+        </div>
+        <div class="field">
+          <label for="jd-search-mode">Mode</label>
+          <select id="jd-search-mode">
+            <option value="all-words-AND" selected>All words (AND)</option>
+            <option value="exact-substring">Exact substring</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="jd-search-btn" class="button button-secondary single-button">Search past JDs</button>
+      <div id="jd-search-results" class="jd-search-results" aria-live="polite"></div>
+    </section>
+
     <div id="result" class="result hidden">
       <p>✅ Resume generated!</p>
       <a id="pdf-link" href="#" target="_blank">Open PDF</a>
@@ -665,6 +685,97 @@
         alert(`Error: ${err.message}`);
       }
     });
+
+    // JD content search panel
+    (function setupJdSearch() {
+      const textInput = document.getElementById('jd-search-text');
+      const modeSelect = document.getElementById('jd-search-mode');
+      const searchBtn = document.getElementById('jd-search-btn');
+      const resultsEl = document.getElementById('jd-search-results');
+      if (!textInput || !modeSelect || !searchBtn || !resultsEl) return;
+
+      function renderEmpty(message) {
+        resultsEl.innerHTML = '';
+        const empty = document.createElement('div');
+        empty.className = 'jd-search-empty';
+        empty.textContent = message;
+        resultsEl.appendChild(empty);
+      }
+
+      function renderMatches(matches) {
+        resultsEl.innerHTML = '';
+        if (!matches || matches.length === 0) {
+          renderEmpty('No matches.');
+          return;
+        }
+        for (const hit of matches) {
+          const card = document.createElement('div');
+          card.className = 'jd-search-hit';
+
+          const meta = document.createElement('div');
+          meta.className = 'jd-search-hit-meta';
+
+          const link = document.createElement('a');
+          link.href = `/jobs/${encodeURIComponent(hit.jobDir)}/${hit.matchedFile}`;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = hit.jobDir;
+          meta.appendChild(link);
+
+          const fileLabel = document.createElement('span');
+          fileLabel.className = 'jd-search-hit-file';
+          fileLabel.textContent = `· ${hit.matchedFile}`;
+          meta.appendChild(fileLabel);
+
+          card.appendChild(meta);
+
+          if (hit.snippet) {
+            const snippet = document.createElement('pre');
+            snippet.className = 'jd-search-snippet';
+            snippet.textContent = hit.snippet;
+            card.appendChild(snippet);
+          }
+
+          resultsEl.appendChild(card);
+        }
+      }
+
+      async function runSearch() {
+        const text = textInput.value.trim();
+        const mode = modeSelect.value;
+        if (!text) {
+          renderEmpty('Type a query to search.');
+          return;
+        }
+        searchBtn.disabled = true;
+        const originalLabel = searchBtn.textContent;
+        searchBtn.textContent = 'Searching…';
+        renderEmpty('Searching…');
+        try {
+          const params = new URLSearchParams({ text, mode });
+          const res = await fetch(`/generate/searchByDescription?${params.toString()}`);
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            renderEmpty(data.error || `Search failed (HTTP ${res.status}).`);
+            return;
+          }
+          renderMatches(data.matches || []);
+        } catch (err) {
+          renderEmpty(`Error: ${err.message}`);
+        } finally {
+          searchBtn.disabled = false;
+          searchBtn.textContent = originalLabel;
+        }
+      }
+
+      searchBtn.addEventListener('click', runSearch);
+      textInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          runSearch();
+        }
+      });
+    })();
   </script>
   <script type="module" src="suggestions.js"></script>
 </body>

@@ -82,6 +82,43 @@ understand the current surface without reading the source or the git log.
 - `GET /generate/checkDuplicate?link=…&company=…&role=…` remains available
   for ad-hoc lookups and also returns `partialMatch` in its response.
 
+## Content search across past JDs
+
+A separate, content-based duplicate lookup. Reads the actual JD text
+(`job-description.txt`, plus `full-jd.txt` when present) from every
+`jobs/<slug>/` folder and returns matching folders with a small context
+snippet. This is **separate from** the metadata-based duplicate guard
+above — it is an ad-hoc tool, not part of the `POST /generate` gate.
+
+- `GET /generate/searchByDescription?text=…&mode=all-words-AND|exact-substring&limit=50`
+  - `text` is required (trimmed). Empty text returns `{ matches: [] }`.
+  - `mode` is optional; defaults to `all-words-AND`. Unknown values → `400`.
+  - `limit` is optional; defaults to `50`, clamped to `[1, 200]`.
+- Always case-insensitive.
+- Modes:
+  - `all-words-AND` — splits `text` on whitespace and requires every token
+    to appear in the file. Mirrors the `rg "software"` workflow: paste a
+    few words, find every past JD that mentions all of them.
+  - `exact-substring` — treats `text` as one literal phrase and matches if
+    it appears verbatim. Use this for "I remember seeing this exact
+    sentence" lookups.
+- Files scanned per folder: `job-description.txt` and `full-jd.txt` (only
+  the ones that exist). A single folder can produce up to two hits, one
+  per file, so the UI can show both.
+- Each hit includes `jobDir`, `matchedFile`, a ~120-char `snippet` centred
+  on the first match, and `mtimeMs` (used for "newer first" sort).
+- Results are sorted by mtimeMs descending (most recent first) and capped
+  at `limit`.
+- The UI has a "Search past JDs" panel below the main form: text input,
+  mode select, search button, and a list of matching folders that link
+  straight to the matched file.
+- **Future work (deferred):** wiring the JD content check into the
+  `POST /generate` flow so a near-duplicate JD surfaces as an additional
+  warning alongside the metadata-based 409; a CLI helper; per-folder
+  "applied" metadata on each hit; token-level highlighting in the
+  snippet. See [`docs/plans/JD_CONTENT_SEARCH_PLAN.md`](plans/JD_CONTENT_SEARCH_PLAN.md)
+  for the full design and rationale.
+
 ## OpenCode session reuse (for trim reprompts)
 
 - `runOpenCode` accepts a `providedSessionId` and `ownsSession: false`. When
