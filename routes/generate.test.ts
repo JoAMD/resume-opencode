@@ -84,6 +84,12 @@ vi.mock('../services/fixSuggestionsService', () => ({
   },
 }));
 
+const latestBackupVersionMock = vi.fn();
+vi.mock('../services/backupService', () => ({
+  createVersionedBackup: vi.fn(),
+  latestBackupVersion: (...args: unknown[]) => latestBackupVersionMock(...args),
+}));
+
 const TECTONIC_URL = 'http://localhost:4000/compile';
 
 describe('compilePDFViaTectonic', () => {
@@ -501,3 +507,149 @@ async function invokeRoute(router: any, method: 'get' | 'post', routePath: strin
     server.close();
   }
 }
+
+describe('GET /generate/diffResume', () => {
+  const JOBS_ROOT = '/tmp/opencode/fake-project-root/jobs';
+  const JOB_DIR = `${JOBS_ROOT}/shopify-swe`;
+  const BACKUP_DIR = `${JOB_DIR}/backups/v1`;
+  const BACKUP_FILE = `${BACKUP_DIR}/structured-output.json`;
+  const CURRENT_FILE = `${JOB_DIR}/structured-output.json`;
+
+  const BACKUP_JSON = { name: 'X', summary: 'Original', skills: {}, experience: [], education: [], projects: [] };
+  const CURRENT_JSON = { name: 'X', summary: 'Updated', skills: {}, experience: [], education: [], projects: [] };
+
+  beforeEach(() => {
+    existsSync.mockReset();
+    readFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    statSync.mockReset();
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === JOB_DIR, isFile: () => p !== JOB_DIR }));
+    latestBackupVersionMock.mockReset();
+  });
+
+  function setupHappyPathFiles(): void {
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === BACKUP_DIR || p === BACKUP_FILE || p === CURRENT_FILE);
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === BACKUP_FILE) return JSON.stringify(BACKUP_JSON);
+      if (p === CURRENT_FILE) return JSON.stringify(CURRENT_JSON);
+      return '';
+    });
+  }
+
+  function setupMissingBackup(): void {
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === CURRENT_FILE);
+    readFileSync.mockImplementation((p: unknown) => (p === CURRENT_FILE ? JSON.stringify(CURRENT_JSON) : ''));
+  }
+
+  function setupMissingCurrent(): void {
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === BACKUP_DIR || p === BACKUP_FILE);
+    readFileSync.mockImplementation((p: unknown) => (p === BACKUP_FILE ? JSON.stringify(BACKUP_JSON) : ''));
+  }
+
+  it('returns 200 with unifiedDiff and summary on the happy path', async () => {
+    setupHappyPathFiles();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1');
+    expect(res.status).toBe(200);
+    expect(res.body.jobDir).toBe('shopify-swe');
+    expect(res.body.backupVersion).toBe(1);
+    expect(typeof res.body.unifiedDiff).toBe('string');
+    expect(res.body.unifiedDiff).toContain('Original');
+    expect(res.body.unifiedDiff).toContain('Updated');
+    expect(Array.isArray(res.body.summary.changedPaths)).toBe(true);
+    expect(res.body.summary.changedPaths).toContain('summary');
+  });
+
+  it('returns 404 with "Backup not found" when the backup is missing', async () => {
+    setupMissingBackup();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Backup not found');
+    expect(res.body.jobDir).toBe('shopify-swe');
+    expect(res.body.version).toBe('v1');
+  });
+
+  it('returns 404 with "Resume not found" when the current is missing', async () => {
+    setupMissingCurrent();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Resume not found');
+    expect(res.body.jobDir).toBe('shopify-swe');
+    expect(res.body.version).toBe('v1');
+  });
+
+  it('returns 400 with "jobDir required" when jobDir is missing', async () => {
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?version=v1');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('jobDir required');
+  });
+
+  it('returns 400 with "invalid version" for v0, v-1, and vabc', async () => {
+    const { default: router } = await import('./generate.js');
+    for (const bad of ['v0', 'v-1', 'vabc']) {
+      const res = await invokeRoute(router, 'get', `/diffResume?jobDir=shopify-swe&version=${bad}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid version');
+    }
+  });
+
+  it('rejects path-traversal payloads via safeRealpath', async () => {
+    realpathSync.mockImplementation((p: string) => {
+      if (p === JOBS_ROOT) return JOBS_ROOT;
+      return '/etc';
+    });
+    existsSync.mockImplementation(() => true);
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=../etc&version=v1');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('jobDir escapes jobs root');
+  });
+
+  it('defaults to latestBackupVersion when version is omitted', async () => {
+    const v3BackupDir = `${JOB_DIR}/backups/v3`;
+    const v3BackupFile = `${v3BackupDir}/structured-output.json`;
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === v3BackupDir || p === v3BackupFile || p === CURRENT_FILE);
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === v3BackupFile) return JSON.stringify(BACKUP_JSON);
+      if (p === CURRENT_FILE) return JSON.stringify(CURRENT_JSON);
+      return '';
+    });
+    latestBackupVersionMock.mockReturnValue(3);
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe');
+    expect(latestBackupVersionMock).toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(res.body.backupVersion).toBe(3);
+  });
+
+  it('omits summary when format=unified', async () => {
+    setupHappyPathFiles();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1&format=unified');
+    expect(res.status).toBe(200);
+    expect(typeof res.body.unifiedDiff).toBe('string');
+    expect(res.body.unifiedDiff.length).toBeGreaterThan(0);
+    expect(res.body.summary).toBeUndefined();
+  });
+
+  it('omits unifiedDiff when format=summary', async () => {
+    setupHappyPathFiles();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1&format=summary');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.summary.changedPaths)).toBe(true);
+    expect(res.body.unifiedDiff).toBeUndefined();
+  });
+
+  it('returns 400 for invalid format', async () => {
+    setupHappyPathFiles();
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'get', '/diffResume?jobDir=shopify-swe&version=v1&format=garbage');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid format');
+  });
+});

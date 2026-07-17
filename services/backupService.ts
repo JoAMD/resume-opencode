@@ -32,6 +32,23 @@ export function nextBackupVersion(backupsRoot: string): number {
   return max + 1;
 }
 
+export function latestBackupVersion(backupsRoot: string): number | null {
+  if (!fs.existsSync(backupsRoot)) return null;
+  const entries = fs.readdirSync(backupsRoot);
+  let max = 0;
+  let found = false;
+  for (const entry of entries) {
+    const match = entry.match(/^v(\d+)$/);
+    if (!match) continue;
+    const n = parseInt(match[1], 10);
+    if (Number.isFinite(n) && n > max) {
+      max = n;
+      found = true;
+    }
+  }
+  return found ? max : null;
+}
+
 function ensureJobDir(jobDir: string): void {
   if (!fs.existsSync(jobDir) || !fs.statSync(jobDir).isDirectory()) {
     throw new Error(`Cannot create backup: job directory does not exist: ${jobDir}`);

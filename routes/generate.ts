@@ -18,6 +18,8 @@ import {
 } from '../services/jobDescriptionSearch';
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
+import { unifiedDiffText, summariseJsonDiff } from '../services/diffUtil';
+import { latestBackupVersion } from '../services/backupService';
 
 const router = Router();
 
@@ -784,6 +786,130 @@ router.get('/redactedResumePath', (req, res) => {
   }
   res.json({ path: null, exists: false });
 });
+
+type DiffResumeFormat = 'unified' | 'summary' | 'both';
+
+type DiffResumeValidated = {
+  realJobDir: string;
+  jobDir: string;
+  backupVersion: number;
+  backupFile: string;
+  currentFile: string;
+  format: DiffResumeFormat;
+};
+
+function parseVersionString(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const match = raw.match(/^v([1-9]\d*)$/);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function resolveAllowedJobDir(queryJobDir: string): ValidationFailure | ValidationSuccess<{ realJobDir: string; backupsRoot: string }> {
+  if (!queryJobDir) return { ok: false, status: 400, error: 'jobDir required' };
+  const realJobDir = safeRealpath(resolveJobDir(queryJobDir));
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realJobDir || !realJobsRoot) {
+    return { ok: false, status: 500, error: 'Failed to resolve job directory' };
+  }
+  if (!pathIsInsideDir(realJobDir, realJobsRoot)) {
+    return { ok: false, status: 400, error: 'jobDir escapes jobs root' };
+  }
+  return { ok: true, value: { realJobDir, backupsRoot: path.join(realJobDir, 'backups') } };
+}
+
+function resolveBackupVersion(backupsRoot: string, queryVersion: string | undefined): ValidationFailure | ValidationSuccess<number> {
+  if (typeof queryVersion === 'string' && queryVersion !== '') {
+    const parsed = parseVersionString(queryVersion);
+    if (parsed === null) return { ok: false, status: 400, error: 'invalid version' };
+    return { ok: true, value: parsed };
+  }
+  const latest = latestBackupVersion(backupsRoot);
+  if (latest === null) return { ok: false, status: 404, error: 'Backup not found' };
+  return { ok: true, value: latest };
+}
+
+const DIFF_FORMATS: ReadonlySet<DiffResumeFormat> = new Set(['unified', 'summary', 'both']);
+
+function resolveDiffFormat(raw: unknown): ValidationFailure | ValidationSuccess<DiffResumeFormat> {
+  const formatRaw = typeof raw === 'string' ? raw : 'both';
+  return DIFF_FORMATS.has(formatRaw as DiffResumeFormat)
+    ? { ok: true, value: formatRaw as DiffResumeFormat }
+    : { ok: false, status: 400, error: 'invalid format' };
+}
+
+function validateDiffResumeRequest(
+  req: Request,
+  queryJobDir: string,
+  queryVersion: string | undefined
+): ValidationFailure | ValidationSuccess<DiffResumeValidated> {
+  const jobDirCheck = resolveAllowedJobDir(queryJobDir);
+  if (isFailure(jobDirCheck)) return jobDirCheck;
+  const versionCheck = resolveBackupVersion(jobDirCheck.value.backupsRoot, queryVersion);
+  if (isFailure(versionCheck)) return versionCheck;
+  const formatCheck = resolveDiffFormat(req.query.format);
+  if (isFailure(formatCheck)) return formatCheck;
+  const realJobDir = jobDirCheck.value.realJobDir;
+  const backupsRoot = jobDirCheck.value.backupsRoot;
+  const backupVersion = versionCheck.value;
+  const format = formatCheck.value;
+  const backupFile = path.join(backupsRoot, `v${backupVersion}`, 'structured-output.json');
+  if (!fs.existsSync(backupFile)) {
+    return { ok: false, status: 404, error: 'Backup not found' };
+  }
+  const currentFile = path.join(realJobDir, 'structured-output.json');
+  if (!fs.existsSync(currentFile)) {
+    return { ok: false, status: 404, error: 'Resume not found' };
+  }
+  return {
+    ok: true,
+    value: {
+      realJobDir,
+      jobDir: queryJobDir,
+      backupVersion,
+      backupFile,
+      currentFile,
+      format,
+    },
+  };
+}
+
+function diffResumeHandler(req: Request, res: import('express').Response): void {
+  const queryJobDir = typeof req.query.jobDir === 'string' ? req.query.jobDir : '';
+  const queryVersion = typeof req.query.version === 'string' ? req.query.version : undefined;
+  const validated = validateDiffResumeRequest(req, queryJobDir, queryVersion);
+  if (isFailure(validated)) {
+    const err = validated.error;
+    const includeLocator = err === 'Backup not found' || err === 'Resume not found' || err === 'invalid version';
+    if (includeLocator) {
+      res.status(validated.status).json({ error: err, jobDir: queryJobDir, version: queryVersion ?? null });
+    } else {
+      res.status(validated.status).json({ error: err });
+    }
+    return;
+  }
+  const v = validated.value;
+  const backupParsed = JSON.parse(fs.readFileSync(v.backupFile, 'utf8'));
+  const currentParsed = JSON.parse(fs.readFileSync(v.currentFile, 'utf8'));
+  const backupPretty = JSON.stringify(backupParsed, null, 2);
+  const currentPretty = JSON.stringify(currentParsed, null, 2);
+  const response: Record<string, unknown> = {
+    jobDir: v.jobDir,
+    backupVersion: v.backupVersion,
+    backupPath: v.backupFile,
+    currentPath: v.currentFile,
+  };
+  if (v.format === 'unified' || v.format === 'both') {
+    response.unifiedDiff = unifiedDiffText(backupPretty, currentPretty, `backup (v${v.backupVersion})`, 'current');
+  }
+  if (v.format === 'summary' || v.format === 'both') {
+    response.summary = summariseJsonDiff(backupParsed, currentParsed);
+  }
+  res.status(200).json(response);
+}
+
+router.get('/diffResume', diffResumeHandler);
 
 function buildApplySuggestionsResult(result: Awaited<ReturnType<typeof applySuggestions>>) {
   return {
