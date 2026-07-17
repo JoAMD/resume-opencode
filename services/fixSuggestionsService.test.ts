@@ -83,21 +83,21 @@ function applyEditsToFile(resumePath: string, mutator: (resume: any) => void) {
 
 describe('resumesAreEqual', () => {
   it('returns true for identical objects regardless of key order', async () => {
-    const { resumesAreEqual } = await import('./fixSuggestionsService.js');
+    const { resumesAreEqual } = await import('./diffUtil.js');
     const a = { x: 1, y: { z: 2, w: 3 }, arr: [1, 2, 3] };
     const b = { y: { w: 3, z: 2 }, x: 1, arr: [1, 2, 3] };
     expect(resumesAreEqual(a, b)).toBe(true);
   });
 
   it('returns false when one field differs', async () => {
-    const { resumesAreEqual } = await import('./fixSuggestionsService.js');
+    const { resumesAreEqual } = await import('./diffUtil.js');
     const a = { x: 1, y: 2 };
     const b = { x: 1, y: 3 };
     expect(resumesAreEqual(a, b)).toBe(false);
   });
 
   it('returns false when array order differs', async () => {
-    const { resumesAreEqual } = await import('./fixSuggestionsService.js');
+    const { resumesAreEqual } = await import('./diffUtil.js');
     expect(resumesAreEqual({ arr: [1, 2, 3] }, { arr: [3, 2, 1] })).toBe(false);
   });
 });
