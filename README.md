@@ -151,6 +151,10 @@ The server (`services/fixSuggestionsService.ts` + `services/backupService.ts`):
 
 Cover letter files are **not** modified by this flow.
 
+After apply runs, click **Compare with backup v1** (or the latest version) in the suggestions panel to see a modal with the unified diff between the pre-edit backup and the on-disk `structured-output.json`, plus a `summary.changedPaths` bullet list. The same data is available as JSON via `GET /generate/diffResume?jobDir=<slug>&version=v1&format=unified|summary|both` (default `both`) — useful for scripting or sharing the diff. The diffResume route reuses the same `safeRealpath` + `ensureJobsRootRealpath` allowlist as `/generate/applySuggestions`, so path-traversal payloads are rejected.
+
+To script the diff from the terminal, the same data is reachable via `GET /generate/diffResume?jobDir=<slug>&version=v<N>&format=unified|summary|both`; `format=unified` returns only the unified diff, `format=summary` returns only the `summary.changedPaths` list, and `format=both` (the default) returns both. The endpoint 404s with a named error (`Backup not found` or `Resume not found`) when either file is missing.
+
 ### Security
 
 - Input sanitization on job descriptions (Unicode, special chars)

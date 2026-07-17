@@ -179,6 +179,17 @@ JSON in place. The cover letter is **not** touched by this flow.
 - **Files written on success** — `structured-output.json`, `resume.tex`,
   `resume.pdf` in the job directory (cover letter files are not
   overwritten).
+- **Compare with backup** — after apply completes, click **Compare with
+  backup v1** in the suggestions panel to see a modal showing the unified
+  diff and a `summary.changedPaths` bullet list between the pre-edit backup
+  and the on-disk `structured-output.json`. The same data is available as
+  JSON via
+  `GET /generate/diffResume?jobDir=<slug>&version=v1&format=unified|summary|both`
+  (default `format=both`). The route is path-allowlisted
+  (`safeRealpath` + `ensureJobsRootRealpath`) and 404s with a named error
+  when the backup or current file is missing. See
+  [the apply-suggestions section in the README](../README.md#apply-suggestions-to-an-existing-resume)
+  for the user-facing flow.
 
 ## OpenCode client lifecycle
 

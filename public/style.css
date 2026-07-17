@@ -408,3 +408,68 @@ button[type="submit"]:disabled,
   font-size: 0.85rem;
   padding: 0.4rem 0;
 }
+
+/* Diff modal — reuses .popover / .popover-body from above. */
+.popover-body .diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.popover-body .diff-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 0.5rem;
+  min-height: 0;
+}
+.popover-body .diff-pre {
+  background: #0e0e12;
+  border: 1px solid #2e2e3e;
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin: 0;
+  font-family: monospace;
+  font-size: 0.8rem;
+  white-space: pre;
+  overflow: auto;
+  max-height: 50vh;
+}
+.popover-body .diff-summary {
+  background: #0e0e12;
+  border: 1px solid #2e2e3e;
+  border-radius: 4px;
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 50vh;
+}
+.popover-body .diff-summary h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: #7db8f7;
+}
+.popover-body .diff-summary ul {
+  list-style: disc;
+  padding-left: 1.2rem;
+  margin: 0;
+}
+.popover-body .diff-summary li {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #e8e8e8;
+  padding: 0.15rem 0;
+}
+.button-link {
+  background: transparent;
+  color: #7db8f7;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+.button-link:hover { color: #f87171; }
+.button-link:focus-visible {
+  outline: 2px solid #7db8f7;
+  outline-offset: 2px;
+  border-radius: 2px;
+}

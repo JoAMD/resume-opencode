@@ -29,8 +29,14 @@ function fetchSuggestionsTemplate() {
       const doc = parser.parseFromString(html, 'text/html');
       const tpl = doc.getElementById('suggestions-panel-template');
       const popover = doc.getElementById('suggestions-file-popover');
-      if (!tpl || !popover) throw new Error('suggestions.html is missing expected nodes');
-      return { tplContent: tpl.content.cloneNode(true), popover: popover.cloneNode(true) };
+      const diffModal = doc.getElementById('suggestions-diff-modal');
+      const allFound = [tpl, popover, diffModal].every(Boolean);
+      if (!allFound) throw new Error('suggestions.html is missing expected nodes');
+      return {
+        tplContent: tpl.content.cloneNode(true),
+        popover: popover.cloneNode(true),
+        diffModal: diffModal.cloneNode(true),
+      };
     });
 }
 
@@ -79,12 +85,13 @@ function createPill(name, removable, filePath) {
   return pill;
 }
 
-function initSuggestionsPanel({ tplContent, popover }) {
+function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   const form = el('resume-form');
   if (!form) throw new Error('resume-form not found; suggestions panel needs the form');
   const section = tplContent.querySelector('#suggestions-section');
   form.appendChild(section);
   document.body.appendChild(popover);
+  document.body.appendChild(diffModal);
 
   const pills = el('suggestions-pills');
   const text = el('suggestions-text');
@@ -104,9 +111,16 @@ function initSuggestionsPanel({ tplContent, popover }) {
   const sessionIdNode = el('suggestions-session-id');
   const sessionCopyBtn = el('suggestions-session-copy');
   const webLink = el('suggestions-web-link');
+  const diffModalRoot = el('suggestions-diff-modal');
+  const diffTitle = el('suggestions-diff-title');
+  const diffCloseBtn = el('suggestions-diff-close');
+  const diffPre = el('suggestions-diff-pre');
+  const diffPaths = el('suggestions-diff-paths');
+  const diffEmpty = el('suggestions-diff-empty');
 
   let lastKnownSlug = null;
   let slugWatchTimer = null;
+  let diffModalTrigger = null;
 
   function autoAttachDefaults() {
     for (const name of DEFAULT_AUTO_ATTACH) {
@@ -225,6 +239,61 @@ function initSuggestionsPanel({ tplContent, popover }) {
     popoverRoot.classList.add('hidden');
   }
 
+  function renderDiffPaths(paths) {
+    diffPaths.innerHTML = '';
+    for (const p of paths) {
+      const li = document.createElement('li');
+      li.textContent = p;
+      diffPaths.appendChild(li);
+    }
+    diffEmpty.classList.toggle('hidden', paths.length > 0);
+  }
+
+  async function fetchDiff(slug, version) {
+    const url = `/generate/diffResume?jobDir=${encodeURIComponent(slug)}&version=v${version}&format=both`;
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+  }
+
+  function renderDiffResponse(data) {
+    diffPre.textContent = data.unifiedDiff || '(no diff)';
+    const paths = (data.summary && data.summary.changedPaths) || [];
+    renderDiffPaths(paths);
+  }
+
+  async function openDiffModal(version, trigger) {
+    const slug = getJobSlug();
+    if (!slug) {
+      setStatus(statusNode, 'Generate a resume first so a job folder is available.', 'error');
+      return;
+    }
+    diffModalTrigger = trigger || null;
+    diffTitle.textContent = `Job: ${slug} · Backup: v${version}`;
+    diffPre.textContent = 'Loading…';
+    renderDiffPaths([]);
+    diffModalRoot.classList.remove('hidden');
+    setTimeout(() => diffCloseBtn.focus(), 0);
+    try {
+      const { ok, data } = await fetchDiff(slug, version);
+      if (!ok) {
+        diffPre.textContent = `Error: ${data.error || 'request failed'}`;
+        return;
+      }
+      renderDiffResponse(data);
+    } catch (err) {
+      diffPre.textContent = `Network error: ${err && err.message ? err.message : err}`;
+    }
+  }
+
+  function closeDiffModal() {
+    diffModalRoot.classList.add('hidden');
+    if (diffModalTrigger && typeof diffModalTrigger.focus === 'function') {
+      diffModalTrigger.focus();
+    }
+    diffModalTrigger = null;
+  }
+
   addFileBtn.addEventListener('click', openFilePopover);
   popoverCancel.addEventListener('click', closeFilePopover);
   popoverSearch.addEventListener('input', () => {
@@ -234,6 +303,10 @@ function initSuggestionsPanel({ tplContent, popover }) {
   });
   popoverRoot.addEventListener('click', (e) => {
     if (e.target === popoverRoot) closeFilePopover();
+  });
+  diffCloseBtn.addEventListener('click', closeDiffModal);
+  diffModalRoot.addEventListener('click', (e) => {
+    if (e.target === diffModalRoot) closeDiffModal();
   });
   changeBtn.addEventListener('click', () => {
     const slug = prompt('Enter job folder slug (the part after jobs/)', getJobSlug() || '');
@@ -265,9 +338,23 @@ function initSuggestionsPanel({ tplContent, popover }) {
       .filter(Boolean);
   }
 
-  function showResult({ pdfUrl, sessionId, webLink: link, backupPath }) {
+  function showResult({ pdfUrl, sessionId, webLink: link, backupPath, backupVersion }) {
     pdfLink.href = pdfUrl;
-    backupPathNode.textContent = `Backup: ${backupPath}`;
+    backupPathNode.innerHTML = '';
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'button-link';
+    trigger.textContent = `Compare with backup v${backupVersion}`;
+    trigger.dataset.backupVersion = String(backupVersion);
+    trigger.addEventListener('click', () => openDiffModal(backupVersion, trigger));
+    backupPathNode.appendChild(trigger);
+    if (backupPath) {
+      const pathHint = document.createElement('span');
+      pathHint.className = 'folder-path';
+      pathHint.style.marginLeft = '8px';
+      pathHint.textContent = `(${backupPath})`;
+      backupPathNode.appendChild(pathHint);
+    }
     if (sessionId) {
       sessionIdNode.textContent = sessionId;
       sessionBlock.classList.remove('hidden');
@@ -336,6 +423,7 @@ function initSuggestionsPanel({ tplContent, popover }) {
       sessionId: r.sessionId,
       webLink: r.webLink,
       backupPath: r.backupPath,
+      backupVersion: r.backupVersion,
     });
     setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
     playSound('success');
