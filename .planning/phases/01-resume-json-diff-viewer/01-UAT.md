@@ -1,17 +1,26 @@
 ---
-status: complete
+status: testing
 phase: 01-resume-json-diff-viewer
 source:
+  - .planning/phases/01-resume-json-diff-viewer/01-04-SUMMARY.md
+  - .planning/phases/01-resume-json-diff-viewer/01-VERIFICATION.md
   - .planning/phases/01-resume-json-diff-viewer/01-03-SUMMARY.md
   - .planning/phases/01-resume-json-diff-viewer/01-02-SUMMARY.md
   - .planning/phases/01-resume-json-diff-viewer/01-01-SUMMARY.md
 started: 2026-07-18T00:58:37Z
-updated: 2026-07-18T02:30:00Z
+updated: 2026-07-18T02:25:30Z
 ---
 
 ## Current Test
 
-[testing complete]
+number: 6
+name: Visual confirmation of plan 04 gap-closure (G-01-2 + G-01-3) and full-file word-diff view
+expected: |
+  After plan 04, the diff modal must show:
+  (a) multiple focused hunks (not one giant block) with red removed / green added / grey context lines;
+  (b) summary.changedPaths entries (e.g. experience.0.bullets.0) on a single line at 640px modal width;
+  (c) Hunks/Full file toggle in the modal header — Hunks shows line spans, Full file shows word-level highlights and lazy-loads via /generate/diffResume?format=word-diff.
+awaiting: user response
 
 ## Tests
 
@@ -61,13 +70,24 @@ result: pass
 
 ## Summary
 
-total: 5
+total: 6
 passed: 5
 issues: 0
-pending: 0
+pending: 1
 skipped: 0
 blocked: 0
 fixed-by-gap-closure: 2
+
+## Pending Visual Confirmations (plan 04)
+
+### 6. Visual confirmation of plan 04 gap-closure + Full file view
+expected: |
+  After clicking Compare with backup in the suggestions panel:
+  (a) Modal renders the unified diff as multiple focused hunks (context ~3 lines per hunk), not one giant block. Removed lines are red, added lines are green, context lines are grey.
+  (b) The summary.changedPaths side panel fits paths like `experience.0.bullets.0` on a single line at 640px modal width (no wrapping).
+  (c) The modal header has Hunks/Full file toggle tabs. Clicking Hunks shows line-level spans. Clicking Full file shows word-level inline highlights (red strikethrough for removed words, green background for added words) and the request is lazy-loaded once per modal open.
+  (d) Closing the modal and reopening for a different backup version refreshes the word-diff cache (no stale highlights).
+result: [pending]
 
 ## Gaps
 
