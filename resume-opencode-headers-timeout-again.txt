@@ -1,0 +1,28 @@
+fu                                                                                 
+[2026-06-23T13:34:29.831Z] GET /generate/task/task_1782221373813_n6egtth                                                                                 
+[2026-06-23T13:34:29.833Z] GET /generate/task/task_1782221373813_n6egtth                                                                                 
+[timing] client.session.prompt FAILED after 300541ms                                                                                                     
+[timing]   error.name: TypeError                                                                                                                         
+[timing]   error.cause.code: UND_ERR_HEADERS_TIMEOUT                                                                                                     
+[timing]   error.message: fetch failed                                                                                                                   
+[timing]   abortSignal.aborted: false (reason: n/a)                                                                                                      
+[timing]   DIAGNOSIS: undici headersTimeout fired (OpenCode server did not send headers in time). Check upstream OpenCode server / proxy timeouts.       
+[timing] runOpenCode caught error after 300587ms total                                                                                                   
+[AI ERROR] TypeError: fetch failed                                          
+    at node:internal/deps/undici/undici:13502:13                                                                                                         
+    at async request (file:///home/adf_home_joel/src/copilot/resume-opencode/node_modules/@opencode-ai/sdk/dist/gen/client/client.gen.js:56:24)
+    at async executeOpencodePrompt (/home/adf_home_joel/src/copilot/resume-opencode/dist/services/ai.js:611:22)
+    at async runOpenCodePipeline (/home/adf_home_joel/src/copilot/resume-opencode/dist/services/ai.js:714:24)
+    at async /home/adf_home_joel/src/copilot/resume-opencode/dist/services/ai.js:662:30 {
+  [cause]: HeadersTimeoutError: Headers Timeout Error                                                                                                    
+      at FastTimer.onParserTimeout [as _onTimeout] (node:internal/deps/undici/undici:6249:32)
+      at Timeout.onTick [as _onTimeout] (node:internal/deps/undici/undici:2210:17)
+      at listOnTimeout (node:internal/timers:614:17)                                                                                                     
+      at process.processTimers (node:internal/timers:549:7) {                                                                                            
+    code: 'UND_ERR_HEADERS_TIMEOUT'                                         
+  }                                   
+}                                     
+[2026-06-23T13:34:34.403Z] ERROR: OpenCode combined generation error: TypeError: fetch failed
+    at node:internal/deps/undici/undici:13502:13                                                                                                         
+    at async request (file:///home/adf_home_joel/src/copilot/resume-opencode/node_modules/@opencode-ai/sdk/dist/gen/client/client.gen.js:56:24)
+    at async executeOpencodePrompt (/home/adf_home_joel/src/copilot/resume-ope

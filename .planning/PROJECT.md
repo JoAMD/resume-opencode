@@ -24,7 +24,7 @@ This is a single-user local tool — not a monetized product. There is no "custo
 
 ## Constraints
 
-- **Tech stack**: TypeScript + Express + vitest. No new runtime dependencies for the diff viewer (per `RESUME_DIFF_VIEWER_PLAN.md` §Background and confirmed by `.planning/research/DIFF_LIBRARY_NOTE.md`).
+- **Tech stack**: TypeScript + Express + vitest. Prefer built-ins and hand-rolled solutions for trivial cases; use well-tested libraries for complex problems — don't reinvent common things.
 - **Node.js runtime**: target ES2021 (per `tsconfig.json`). Project tracks Node 20+; `node:diff` is **not** a real built-in (proposal, not landed) — the local fallback is the only viable path.
 - **No new UI framework**: vanilla HTML/CSS/TS/JS in `public/`. The diff modal reuses the existing popover backdrop pattern.
 - **Security**: admin endpoints stay behind basic auth. New `GET /generate/diffResume` route is read-only and reuses the existing `safeRealpath` + `ensureJobsRootRealpath` allow-list.
@@ -63,7 +63,7 @@ The current milestone. Scope is the in-app resume JSON diff viewer, per `docs/pl
 - [ ] **DIFF-05**: New shared `services/diffUtil.ts` exposes `canonicalize`, `resumesAreEqual`, `unifiedDiffText` (local fallback — `node:diff` is not a real built-in, see `.planning/research/DIFF_LIBRARY_NOTE.md`), and `summariseJsonDiff`. `fixSuggestionsService.ts` is updated to import `resumesAreEqual` from the new module; the local copy is deleted.
 - [ ] **DIFF-06**: `latestBackupVersion(backupsRoot): number | null` helper added to `services/backupService.ts` (no behaviour change to `nextBackupVersion`).
 - [ ] **DIFF-07**: `services/diffUtil.test.ts` and updated `routes/generate.test.ts` cover happy path, 404s (backup missing, current missing), 400s (missing `jobDir`, bad `version`, path-traversal), and `format` variants.
-- [ ] **DIFF-08**: Modal scaffolding reuses the existing popover backdrop class and the close-on-outside-click pattern at `public/suggestions.js:235-237`. No new CSS framework, no new JS dependencies.
+- [ ] **DIFF-08**: Modal scaffolding reuses the existing popover backdrop class and the close-on-outside-click pattern at `public/suggestions.js:235-237`. No new CSS framework.
 - [ ] **DIFF-09**: `README.md` and `docs/FEATURES.md` are updated in the same commit as the feature, per `AGENTS.md` §3.
 
 ### Out of Scope
@@ -79,7 +79,7 @@ The current milestone. Scope is the in-app resume JSON diff viewer, per `docs/pl
 - ✗ `RESUME_PAGE_LIMIT_UI_PLAN.md` (UI surfacing of `characterCountTrimmed`). **Why:** sibling plan, distinct feature, separate milestone.
 - ✗ `LLM_PROVIDER_ABSTRACTION_PLAN-unrefined.md`. **Why:** early-stage, unrefined; needs its own scoping.
 - ✗ Wiring the JD content search into the `POST /generate` flow (deferred item in `docs/FEATURES.md`). **Why:** separate concern.
-- ✗ New runtime dependencies of any kind. **Why:** the local fallback in `services/diffUtil.ts` is sufficient (`node:diff` is not a real built-in per `.planning/research/DIFF_LIBRARY_NOTE.md`).
+- ✗ New runtime dependencies without evaluation. **Why:** well-tested libraries for complex problems (diff, JSON path, etc.) are preferred over hand-rolling; trivial cases should still use built-ins.
 
 ## Key Decisions
 

@@ -1,0 +1,8 @@
+adf_home_joel@adfhomepc:~/src/copilot/resume-opencode$ opencode .
+                                   ▄     
+  █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+  █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+  ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+  Session   Executing HARDENING_PLAN.md for compose services
+  Continue  opencode -s ses_12147a368ffeJ1Gval5LqC7Zyp

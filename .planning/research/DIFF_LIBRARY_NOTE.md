@@ -78,7 +78,7 @@ These already exist at `services/fixSuggestionsService.ts:63-76`. The plan's Ste
 ## Implications for Roadmap
 
 1. **The plan's Step 1.1 implementation guidance must be updated** to drop the `node:diff` probe and start with the local fallback. Without this change, `unifiedDiffText` will be a no-op on every currently-supported Node.
-2. **No new dependencies are required.** The plan's "no new runtime dependencies" goal is preserved.
+2. **No new dependencies are required** (per the original project constraint). The diff library choice is being revisited; `diff` npm is the preferred option if a library is used.
 3. **Code Health considerations:** the local `unifiedDiffText` implementation should be paired with tests that cover:
    - Identical inputs → `''`
    - Single-key added → output contains the new key

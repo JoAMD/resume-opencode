@@ -13,8 +13,8 @@ This milestone is a single-feature add-on to an existing, actively-developed bro
 - [ ] **DIFF-05**: `services/diffUtil.ts` exposes `canonicalize(value)`, `resumesAreEqual(a, b)`, `unifiedDiffText(a: string, b: string, labelA: string, labelB: string): string`, and `summariseJsonDiff(a, b): { changedPaths, addedKeys, removedKeys }`. The `unifiedDiffText` implementation uses a local "common prefix + change block" algorithm — `node:diff` is **not** a real Node built-in (see `.planning/research/DIFF_LIBRARY_NOTE.md`).
 - [ ] **DIFF-05b**: `services/fixSuggestionsService.ts` imports `resumesAreEqual` from `./diffUtil` and deletes its local copy. No other callers of `resumesAreEqual` or `canonicalize` exist in `services/`.
 - [ ] **DIFF-06**: `services/backupService.ts` adds `latestBackupVersion(backupsRoot: string): number | null` — pure read, no side effects, no change to `nextBackupVersion`.
-- [ ] **DIFF-02**: `GET /generate/diffResume?jobDir=…&version=…&format=unified|summary|both` returns `{ jobDir, backupVersion, backupPath, currentPath, unifiedDiff?, summary? }` per the plan. `format` defaults to `both`; `unified` omits `summary`; `summary` omits `unifiedDiff`. Both files are pretty-printed via `JSON.stringify(_, null, 2)` before diffing so key reordering is not noise. **No PII handling on the route** — the route is read-only and basic-auth-gated, and the diff itself contains the user's own resume (no third-party call).
-- [ ] **DIFF-03**: The route is wrapped by the existing basic-auth middleware on admin endpoints and reuses the `safeRealpath` + `ensureJobsRootRealpath` allow-list pattern from `routes/generate.ts:797-799`. Path-traversal payloads (`jobDir=../etc`) are rejected.
+- [ ] **DIFF-02**: `GET /generate/diffResume?jobDir=…&version=…&format=unified|summary|both` returns `{ jobDir, backupVersion, backupPath, currentPath, unifiedDiff?, summary? }` per the plan. `format` defaults to `both`; `unified` omits `summary`; `summary` omits `unifiedDiff`. Both files are pretty-printed via `JSON.stringify(_, null, 2)` before diffing so key reordering is not noise. **No PII handling on the route** — the route is read-only and serves the user's own resume (no third-party call). The path allowlist (`safeRealpath` + `pathIsInsideDir`) is the security boundary; see DIFF-03 for the admin-auth decision.
+- [ ] **DIFF-03**: The route reuses the `safeRealpath` + `ensureJobsRootRealpath` allow-list pattern from `routes/generate.ts:797-799` (and the `pathIsInsideDir` check). Path-traversal payloads (`jobDir=../etc`) are rejected. **The route is NOT wrapped in `requireAdminAuth`** — it follows the existing `/generate/*` convention where only `/api/config` and `/api/edit` are admin-gated (see `server.ts:65,139`).
 - [ ] **DIFF-04**: `version` is validated against `/^v\d+$/` after `Number` parse; rejects `v0`, negative numbers, and non-numeric. When omitted, defaults to `latestBackupVersion(backupsRoot)`.
 - [ ] **DIFF-04b**: 404 with `{ error: 'Backup not found' | 'Resume not found', jobDir, version }` when the resolved backup or current file is missing. 400 with `{ error: 'jobDir required' }` when `jobDir` is missing. 400 with `{ error: 'invalid version' }` on bad `version`.
 
@@ -38,6 +38,8 @@ This milestone is a single-feature add-on to an existing, actively-developed bro
 ### Safeguard
 
 - [ ] **DIFF-10**: `pre_commit_code_health_safeguard` is clean (no regression) on the final commit. `npm test` and `npm run build` are clean. The manual runbook in `RESUME_DIFF_VIEWER_PLAN.md` §"Manual runbook" steps 1–5 is executed and observed before the milestone is declared done.
+
+> **Decision (2026-07-18):** The diff route is read-only and serves the user's own resume over a path-allowlisted endpoint. The source plan originally said it would be admin-gated, but no existing `/generate/*` route is admin-gated, so this route follows the existing convention. Admin-gating the whole `/generate/*` surface is a separate, broader decision deferred to a future milestone.
 
 ## v2 Requirements
 
@@ -65,7 +67,7 @@ Deferred to future milestones. Tracked but not in current scope.
 | Auto-running the diff after every successful `applySuggestions` | User is in flow; explicit click keeps the surface calm. |
 | Live / streaming / incremental diff | Resume JSONs are <50 KB; cost is negligible. |
 | Server-side caching of the diff response | Same as above. |
-| New runtime dependencies (e.g. a JSON-path library) | Local implementation in `services/diffUtil.ts` is ~50 lines; no library gives more value. |
+| New runtime dependencies (e.g. a JSON-path library) | Well-tested libraries are preferred for complex problems; trivial implementations (~50 lines) may be hand-rolled when clearly sufficient. |
 | Wiring the JD content search into `POST /generate` (deferred item in `docs/FEATURES.md`) | Separate concern; belongs to a future milestone. |
 | `RESUME_PAGE_LIMIT_UI_PLAN.md` (UI surfacing of `characterCountTrimmed`) | Sibling plan; distinct feature. |
 | `LLM_PROVIDER_ABSTRACTION_PLAN-unrefined.md` | Early-stage, unrefined; needs its own scoping. |

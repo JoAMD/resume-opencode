@@ -57,7 +57,7 @@ Comprehensive: `ARCHITECTURE.md`, `STACK.md`, `STRUCTURE.md`, `CONVENTIONS.md`, 
 
 ## Active Constraints
 
-- No new runtime dependencies.
+- Prefer built-ins and hand-rolled solutions for trivial cases; use well-tested libraries for complex problems (e.g. diff algorithms, JSON path, etc.) — don't reinvent common things.
 - No new UI framework; reuse existing popover backdrop and click-outside-close patterns.
 - Code Health: `pre_commit_code_health_safeguard` clean before commit.
 - `npm test` and `npm run build` clean.

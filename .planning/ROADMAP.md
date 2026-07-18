@@ -18,7 +18,7 @@
 **Success Criteria:**
 1. `services/diffUtil.ts` exists; `fixSuggestionsService.ts` imports `resumesAreEqual` from it; the local copy is gone. `unifiedDiffText` and `summariseJsonDiff` have unit tests in `services/diffUtil.test.ts`.
 2. `GET /generate/diffResume?jobDir=…&version=…&format=unified|summary|both` returns 200 on a known job with a known backup, 404 with a named error when the backup or current is missing, 400 on bad `jobDir` / `version` / path-traversal, and the response shape matches the plan. `latestBackupVersion` is added to `services/backupService.ts`.
-3. The suggestions panel's "Backup: …" text becomes a clickable control; clicking opens a modal that shows the unified diff and a `summary.changedPaths` bullet list. Close via button or click-outside. No new CSS framework, no new JS dependencies.
+3. The suggestions panel's "Backup: …" text becomes a clickable control; clicking opens a modal that shows the unified diff and a `summary.changedPaths` bullet list. Close via button or click-outside. No new CSS framework. Prefer built-ins for trivial cases; use well-tested libraries for complex problems.
 4. `README.md` and `docs/FEATURES.md` are updated in the same commit as the feature. `npm test` and `npm run build` are clean. `pre_commit_code_health_safeguard` reports no regression. The manual runbook in `RESUME_DIFF_VIEWER_PLAN.md` steps 1–5 has been executed and observed.
 
 **Plans:** 4 plans (gap-closure plan added for G-01-2 and G-01-3)
