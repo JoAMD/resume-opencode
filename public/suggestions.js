@@ -119,11 +119,13 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   const diffEmpty = el('suggestions-diff-empty');
   const diffViewHunksBtn = el('diff-view-hunks');
   const diffViewFullBtn = el('diff-view-full');
+  const diffWrapToggle = el('diff-wrap-toggle');
 
   let lastKnownSlug = null;
   let slugWatchTimer = null;
   let diffModalTrigger = null;
   let lastUnifiedDiff = '';
+  let isWrapEnabled = true;
   let cachedWordDiffHtml = null;
   let currentDiffSlug = '';
   let currentDiffVersion = '';
@@ -389,6 +391,13 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       } catch {
         diffPre.innerHTML = '(failed to load full file diff)';
       }
+    });
+  }
+  if (diffWrapToggle) {
+    diffWrapToggle.addEventListener('click', () => {
+      isWrapEnabled = !isWrapEnabled;
+      diffPre.style.whiteSpace = isWrapEnabled ? 'pre-wrap' : 'pre';
+      diffWrapToggle.classList.toggle('active', isWrapEnabled);
     });
   }
   changeBtn.addEventListener('click', () => {
