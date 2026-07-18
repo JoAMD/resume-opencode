@@ -1,5 +1,5 @@
 ---
-status: testing
+status: complete
 phase: 01-resume-json-diff-viewer
 source:
   - .planning/phases/01-resume-json-diff-viewer/01-04-SUMMARY.md
@@ -8,19 +8,12 @@ source:
   - .planning/phases/01-resume-json-diff-viewer/01-02-SUMMARY.md
   - .planning/phases/01-resume-json-diff-viewer/01-01-SUMMARY.md
 started: 2026-07-18T00:58:37Z
-updated: 2026-07-18T02:25:30Z
+updated: 2026-07-18T03:11:00Z
 ---
 
 ## Current Test
 
-number: 6
-name: Visual confirmation of plan 04 gap-closure (G-01-2 + G-01-3) and full-file word-diff view
-expected: |
-  After plan 04, the diff modal must show:
-  (a) multiple focused hunks (not one giant block) with red removed / green added / grey context lines;
-  (b) summary.changedPaths entries (e.g. experience.0.bullets.0) on a single line at 640px modal width;
-  (c) Hunks/Full file toggle in the modal header — Hunks shows line spans, Full file shows word-level highlights and lazy-loads via /generate/diffResume?format=word-diff.
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -71,9 +64,9 @@ result: pass
 ## Summary
 
 total: 6
-passed: 5
+passed: 6
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 fixed-by-gap-closure: 2
@@ -87,7 +80,24 @@ expected: |
   (b) The summary.changedPaths side panel fits paths like `experience.0.bullets.0` on a single line at 640px modal width (no wrapping).
   (c) The modal header has Hunks/Full file toggle tabs. Clicking Hunks shows line-level spans. Clicking Full file shows word-level inline highlights (red strikethrough for removed words, green background for added words) and the request is lazy-loaded once per modal open.
   (d) Closing the modal and reopening for a different backup version refreshes the word-diff cache (no stale highlights).
-result: [pending]
+result: pass
+note: |
+  (a) PASS — multiple focused hunks with red/green/grey.
+  (b) PASS — paths fit on single line. Suggestion: remove "No changes" entry when there are actual changes.
+  (c) PASS — toggle works. Enhancement requests: (1) larger modal filling most of screen, (2) show line numbers in word-diff view.
+  (d) PASS — cache refresh verified by opening different backup versions.
+
+## Deferred Follow-Ups
+
+- test: 6
+  idea: "Remove 'No changes' entry from summary.changedPaths when there are actual changes"
+  deferred_at: 2026-07-18
+- test: 6
+  idea: "Make diff modal fill most of the screen (larger modal size)"
+  deferred_at: 2026-07-18
+- test: 6
+  idea: "Show line numbers in word-diff Full file view"
+  deferred_at: 2026-07-18
 
 ## Gaps
 
