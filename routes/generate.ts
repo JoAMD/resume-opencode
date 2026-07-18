@@ -19,7 +19,7 @@ import {
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
-import { latestBackupVersion } from '../services/backupService';
+import { latestBackupVersion, listBackupVersions, listJobDirs } from '../services/backupService';
 
 const router = Router();
 
@@ -736,6 +736,41 @@ function listJobFilesHandler(req: Request, res: import('express').Response) {
 }
 
 router.get('/listJobFiles', listJobFilesHandler);
+
+function listJobDirsHandler(_req: Request, res: import('express').Response): void {
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realJobsRoot) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+  const dirs = listJobDirs(realJobsRoot);
+  res.json({ dirs });
+}
+
+function listBackupsHandler(req: Request, res: import('express').Response): void {
+  const slug = typeof req.query.jobDir === 'string' ? req.query.jobDir : '';
+  if (!slug) {
+    res.status(400).json({ error: 'jobDir required' });
+    return;
+  }
+  const resolved = resolveJobDir(slug);
+  const realResolved = safeRealpath(resolved);
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realResolved || !realJobsRoot || !pathIsInsideDir(realResolved, realJobsRoot)) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    res.status(404).json({ error: 'Job directory not found' });
+    return;
+  }
+  const backupsRoot = path.join(resolved, 'backups');
+  const versions = listBackupVersions(backupsRoot);
+  res.json({ versions });
+}
+
+router.get('/listJobDirs', listJobDirsHandler);
+router.get('/listBackups', listBackupsHandler);
 
 function ensureRedactedResumeForJob(req: Request, res: import('express').Response): void {
   const validated = validateEnsureRedactedResumeRequest(req.body);

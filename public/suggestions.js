@@ -295,19 +295,24 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
 
   function wrapDiffLinesWithSpans(diffText) {
     const lines = diffText.split('\n');
-    return lines.map((line) => {
+    return lines.map((line, idx) => {
+      const lineNum = idx + 1;
+      const isChanged = line.startsWith('+') || line.startsWith('-');
+      const numSpan = isChanged
+        ? `<span class="diff-line-num diff-line-num--changed">${lineNum}</span>`
+        : `<span class="diff-line-num">${lineNum}</span>`;
       if (line.startsWith('-')) {
-        return '<span class="diff-removed">- ' + escapeHtml(line.slice(1)) + '</span>';
+        return numSpan + '<span class="diff-removed">- ' + escapeHtml(line.slice(1)) + '</span>';
       }
       if (line.startsWith('+')) {
-        return '<span class="diff-added">+ ' + escapeHtml(line.slice(1)) + '</span>';
+        return numSpan + '<span class="diff-added">+ ' + escapeHtml(line.slice(1)) + '</span>';
       }
-      return escapeHtml(line);
+      return numSpan + escapeHtml(line);
     }).join('\n');
   }
 
-  async function openDiffModal(version, trigger) {
-    const slug = getJobSlug();
+  async function openDiffModal(version, trigger, explicitSlug) {
+    const slug = explicitSlug || getJobSlug();
     if (!slug) {
       setStatus(statusNode, 'Generate a resume first so a job folder is available.', 'error');
       return;
@@ -553,6 +558,73 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
 
   refreshSlug();
   startSlugWatcher();
+
+  const vdsFolderInput = el('vds-folder-input');
+  const vdsSourceVersion = el('vds-source-version');
+  const vdsTargetVersion = el('vds-target-version');
+  const vdsDiffBtn = el('vds-diff-btn');
+  const vdsFolderList = el('vds-folder-list');
+
+  if (vdsFolderInput && vdsSourceVersion && vdsTargetVersion && vdsDiffBtn) {
+    const lastJobDir = globalThis.__resumeOpencode && globalThis.__resumeOpencode.lastJobDir;
+    if (lastJobDir) vdsFolderInput.value = lastJobDir;
+
+    async function loadVersionDropdowns(folder) {
+      if (!folder) return;
+      const url = `/generate/listBackups?jobDir=${encodeURIComponent(folder)}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        const versions = data.versions || [];
+        const opts = versions.map(v => `<option value="${v}">v${v}</option>`).join('');
+        vdsSourceVersion.innerHTML = opts;
+        vdsTargetVersion.innerHTML = opts;
+        vdsSourceVersion.disabled = false;
+        vdsTargetVersion.disabled = false;
+        if (versions.length >= 2) {
+          vdsSourceVersion.value = versions[versions.length - 2];
+          vdsTargetVersion.value = versions[versions.length - 1];
+          vdsDiffBtn.disabled = false;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    async function loadFolderList() {
+      try {
+        const res = await fetch('/generate/listJobDirs');
+        if (!res.ok) return;
+        const data = await res.json();
+        const dirs = data.dirs || [];
+        vdsFolderList.innerHTML = dirs.map(d => `<option value="${d}">`).join('');
+      } catch (e) { /* ignore */ }
+    }
+
+    loadFolderList();
+
+    if (vdsFolderInput.value) loadVersionDropdowns(vdsFolderInput.value);
+
+    vdsFolderInput.addEventListener('change', () => {
+      const folder = vdsFolderInput.value.trim();
+      if (!folder) {
+        vdsSourceVersion.innerHTML = '<option value="">Select folder first</option>';
+        vdsTargetVersion.innerHTML = '<option value="">Select folder first</option>';
+        vdsSourceVersion.disabled = true;
+        vdsTargetVersion.disabled = true;
+        vdsDiffBtn.disabled = true;
+        return;
+      }
+      loadVersionDropdowns(folder);
+    });
+
+    vdsDiffBtn.addEventListener('click', () => {
+      const folder = vdsFolderInput.value.trim();
+      const sourceVersion = vdsSourceVersion.value;
+      const targetVersion = vdsTargetVersion.value;
+      if (!folder || !sourceVersion || !targetVersion) return;
+      openDiffModal(targetVersion, vdsDiffBtn, folder);
+    });
+  }
 }
 
 function bootstrap() {

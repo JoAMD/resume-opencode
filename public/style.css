@@ -523,3 +523,7 @@ button[type="submit"]:disabled,
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+.diff-line-num { color: #555; user-select: none; margin-right: 0.5rem; min-width: 2rem; display: inline-block; }
+.diff-line-num--changed { color: #16a34a; font-weight: 600; }
+.diff-pre { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; }

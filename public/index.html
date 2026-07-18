@@ -44,7 +44,7 @@
 
       <div class="field">
         <label for="jobDescription">Job Description <span class="optional">(optional if using role-title-only mode)</span></label>
-        <textarea id="jobDescription" rows="14" placeholder="Paste the full job description here..."></textarea>
+        <textarea id="jobDescription" rows="20" placeholder="Paste the full job description here..."></textarea>
       </div>
 
       <div class="field">
@@ -153,6 +153,35 @@
       </div>
       <button type="button" id="jd-search-btn" class="button button-secondary single-button">Search past JDs</button>
       <div id="jd-search-results" class="jd-search-results" aria-live="polite"></div>
+    </section>
+
+    <section id="version-diff-panel" class="jd-search">
+      <h2>Diff two backup versions</h2>
+      <p class="subtitle">Select any job folder and compare two saved versions of your resume.</p>
+      <div class="row two-col">
+        <div class="field">
+          <label for="vds-folder-input">Folder</label>
+          <input type="text" id="vds-folder-input" list="vds-folder-list" placeholder="e.g. shopify-senior-se-2025-06-18" />
+          <datalist id="vds-folder-list"></datalist>
+        </div>
+        <div class="field">
+          <label for="vds-source-version">Source version</label>
+          <select id="vds-source-version" disabled>
+            <option value="">Select folder first</option>
+          </select>
+        </div>
+      </div>
+      <div class="row two-col">
+        <div class="field">
+          <label for="vds-target-version">Target version</label>
+          <select id="vds-target-version" disabled>
+            <option value="">Select folder first</option>
+          </select>
+        </div>
+        <div class="field" style="display: flex; align-items: flex-end;">
+          <button type="button" id="vds-diff-btn" class="button button-secondary single-button" disabled>Diff</button>
+        </div>
+      </div>
     </section>
 
     <div id="result" class="result hidden">
