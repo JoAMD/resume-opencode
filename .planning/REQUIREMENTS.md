@@ -43,13 +43,15 @@ This milestone is a single-feature add-on to an existing, actively-developed bro
 
 ## v2 Requirements
 
-Deferred to future milestones. Tracked but not in current scope.
+### In Progress
+
+### Backup-version picker
+- **DIFF-12**: Modal shows a small dropdown to pick any backup version (not just latest). Currently latest-only. → **Phase 2**
+
+### Deferred
 
 ### UI side-by-side diff
 - **DIFF-11**: Side-by-side field-level diff with colour-coded JSON (the explicitly-deferred item from the plan).
-
-### Backup-version picker
-- **DIFF-12**: Modal shows a small dropdown to pick any backup version (not just latest). Currently latest-only.
 
 ### Inline (non-modal) panel
 - **DIFF-13**: Alternative inline expandable panel below the existing buttons instead of the modal. Currently modal.
@@ -94,6 +96,7 @@ Deferred to future milestones. Tracked but not in current scope.
 | DIFF-09a | Phase 1 | Pending |
 | DIFF-09b | Phase 1 | Pending |
 | DIFF-10 | Phase 1 | Pending |
+| DIFF-12 | Phase 2 | In Progress |
 
 **Coverage:**
 - v1 requirements: 16 total

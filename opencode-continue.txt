@@ -1,3 +1,8 @@
+http://100.68.164.48:4096/L2hvbWUvYWRmX2hvbWVfam9lbC9zcmMvY29waWxvdC9yZXN1bWUtb3BlbmNvZGU/session/ses_08c8e96c9ffefeTkSiWUP34HeE
+plan not accurate
+Note on Task 2: Full-file mode will lose word-level highlighting (the wordDiffHtml approach). If word-level highlighting is needed in full-file mode, that can be a separate future improvement. The priority is getting line numbers into both views.
+
+
 adf_home_joel@adfhomepc:~/src/copilot/resume-opencode$ opencode .
                                    ▄     
   █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
