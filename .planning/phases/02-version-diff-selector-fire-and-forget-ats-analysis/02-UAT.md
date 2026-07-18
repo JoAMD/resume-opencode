@@ -85,19 +85,24 @@ blocked: 0
 - gap_id: G-02-5
   truth: "Diff line numbers shown in full file mode with highlighting for changed lines"
   status: failed
-  reason: "User reported: Line numbers are in hunks mode, not full file mode"
+  reason: "User reported: Full file mode has no line numbers at all; hunks mode has sequential numbers but they don't match actual file line numbers from @@ headers"
   severity: major
   test: 5
-  root_cause: "wrapDiffLinesWithSpans in public/suggestions.js uses idx+1 (array index) instead of parsing @@ hunk headers for actual file line numbers"
+  root_cause: |
+    Two separate issues:
+    1. Full-file view: switchToFullView sets diffPre.innerHTML = wordDiffHtml directly, and wordDiffHtml (from generateInlineDiff) has no line numbers at all
+    2. Hunks view: wrapDiffLinesWithSpans uses idx+1 instead of parsing @@ hunk headers
   artifacts:
     - path: "public/suggestions.js"
-      issue: "Line numbers reset to 1 at each hunk instead of running sequentially across full file"
-      lines: "296-312"
+      issue: "switchToFullView (line 280-286) uses wordDiffHtml with no line numbers; wrapDiffLinesWithSpans (line 296-312) uses idx+1"
+      lines: "280-312"
+    - path: "services/diffUtil.ts"
+      issue: "generateInlineDiff (line 68-82) produces word-level diff HTML with no line numbers"
+      lines: "68-82"
   missing:
-    - "Parse @@ -X,Y +Z,W @@ hunk headers to extract starting line numbers"
-    - "Maintain oldLine and newLine counters across all hunks"
-    - "Use actual file line numbers instead of array indices"
-  debug_session: ".planning/debug/diff-modal-narrow.md"
+    - "Task 1: Fix wrapDiffLinesWithSpans to parse @@ hunk headers for running oldLine/newLine counters"
+    - "Task 2: Update switchToFullView to use wrapDiffLinesWithSpans(lastUnifiedDiff) instead of wordDiffHtml"
+  debug_session: ""
 
 ## Deferred Follow-Ups
 
