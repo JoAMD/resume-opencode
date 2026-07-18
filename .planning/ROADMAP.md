@@ -21,10 +21,11 @@
 3. The suggestions panel's "Backup: …" text becomes a clickable control; clicking opens a modal that shows the unified diff and a `summary.changedPaths` bullet list. Close via button or click-outside. No new CSS framework, no new JS dependencies.
 4. `README.md` and `docs/FEATURES.md` are updated in the same commit as the feature. `npm test` and `npm run build` are clean. `pre_commit_code_health_safeguard` reports no regression. The manual runbook in `RESUME_DIFF_VIEWER_PLAN.md` steps 1–5 has been executed and observed.
 
-**Plans:** TBD at plan-phase. Expected shape, per `RESUME_DIFF_VIEWER_PLAN.md` steps 1–5:
+**Plans:** 4 plans (gap-closure plan added for G-01-2 and G-01-3)
 - Plan 1: `services/diffUtil.ts` + relocate `canonicalize` / `resumesAreEqual` + add `unifiedDiffText` + `summariseJsonDiff` + unit tests.
 - Plan 2: `latestBackupVersion` + `GET /generate/diffResume` route + route tests.
 - Plan 3: UI modal scaffolding + clickable backup link + `openDiffModal` / `closeDiffModal` + manual runbook.
+- Plan 4 (gap-closure): Multi-hunk LCS diff algorithm + color spans + modal width fix (G-01-2, G-01-3)
 
 ---
 
