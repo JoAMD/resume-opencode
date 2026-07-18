@@ -56,11 +56,22 @@
 | DIFF-09a | Phase 1 | Pending |
 | DIFF-09b | Phase 1 | Pending |
 | DIFF-10 | Phase 1 | Pending |
+| VDS-01 | Phase 2 | Pending |
+| VDS-02 | Phase 2 | Pending |
+| VDS-03 | Phase 2 | Pending |
+| VDS-04 | Phase 2 | Pending |
+| AUTO-01 | Phase 2 | Pending |
+| AUTO-02 | Phase 2 | Pending |
+| AUTO-03 | Phase 2 | Pending |
+| AUTO-04 | Phase 2 | Pending |
+| AUTO-05 | Phase 2 | Pending |
+| UI-01 | Phase 2 | Pending |
+| UI-02 | Phase 2 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 16 total
-- Mapped to phases: 16
+- v1 requirements: 16 (Phase 1) + 11 (Phase 2) = 27 total
+- Mapped to phases: 27
 - Unmapped: 0 ✓
 
 ---
@@ -77,14 +88,15 @@ These are visible in the project today and intentionally not addressed by this m
 
 ### Phase 2: Version diff selector + fire-and-forget ATS analysis
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Ship three capabilities: (1) version-diff-selector panel below "Search past JDs" for diffing any two backup versions; (2) fire-and-forget auto-chain: generation → auto-applySuggestions → ATS analysis; (3) Phase 1 UI tweaks (main model fills screen, word diff shows line numbers).
+**Requirements**: VDS-01, VDS-02, VDS-03, VDS-04, AUTO-01, AUTO-02, AUTO-03, AUTO-04, AUTO-05, UI-01, UI-02
 **Depends on:** Phase 1
-**Plans:** 0 plans
+**Plans:** 2 plans
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 2 to break down)
+- [x] 02-01-PLAN.md — Version-diff-selector panel + Phase 1 UI tweaks
+- [x] 02-02-PLAN.md — Auto-chain: generate → applySuggestions → ATS
 
 ---
 *Roadmap created: 2026-07-18*
