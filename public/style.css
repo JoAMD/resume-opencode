@@ -527,3 +527,19 @@ button[type="submit"]:disabled,
 .diff-line-num { color: #555; user-select: none; margin-right: 0.5rem; min-width: 2rem; display: inline-block; }
 .diff-line-num--changed { color: #16a34a; font-weight: 600; }
 .diff-pre { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; }
+
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background: #1a1a2e;
+  border: 1px solid #4f8ef7;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: #e8e8e8;
+  font-size: 0.9rem;
+  z-index: 1000;
+  max-width: 320px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.toast.hidden { display: none; }

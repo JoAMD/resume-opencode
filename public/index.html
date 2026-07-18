@@ -112,6 +112,13 @@
         </label>
       </div>
 
+      <div class="field">
+        <label class="checkbox-label" for="autoApplySuggestions">
+          <input type="checkbox" id="autoApplySuggestions" checked />
+          Auto-apply suggestions after generation
+        </label>
+      </div>
+
       <button type="submit" id="submit-btn" class="button">Generate Resume + Cover Letter</button>
       <button type="button" id="resume-only-btn" class="button button-secondary">Generate Resume Only</button>
 
@@ -134,6 +141,7 @@
     </form>
 
     <div id="status" class="status hidden"></div>
+    <div id="ats-toast" class="toast hidden"></div>
 
     <section id="jd-search-panel" class="jd-search">
       <h2>Search past JDs</h2>
@@ -204,6 +212,16 @@
     }
     resumeTypeSelect.addEventListener('change', () => {
       sessionStorage.setItem('resumeType', resumeTypeSelect.value);
+    });
+
+    // Auto-apply suggestions checkbox - persist in sessionStorage
+    const autoApplyCheckbox = document.getElementById('autoApplySuggestions');
+    const savedAutoApply = sessionStorage.getItem('autoApplySuggestions');
+    if (savedAutoApply !== null) {
+      autoApplyCheckbox.checked = savedAutoApply === 'true';
+    }
+    autoApplyCheckbox.addEventListener('change', () => {
+      sessionStorage.setItem('autoApplySuggestions', String(autoApplyCheckbox.checked));
     });
 
     // Copy OpenCode session id to clipboard
@@ -369,6 +387,54 @@
       }
     }
 
+    // Poll applySuggestions then fire ATS background
+    async function pollApplySuggestionsThenAts(applyTaskId, jobDir) {
+      while (true) {
+        const res = await fetch(`/generate/task/${applyTaskId}`);
+        const data = await res.json();
+        if (data.status === 'complete') {
+          // Fire ATS background
+          fetch('/generate/runAtsBackground', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobDir, atsKeywords: [], resumeJSON: null }),
+          }).then(res => res.json()).then(atsData => {
+            if (atsData.taskId) {
+              pollAtsCompletion(atsData.taskId);
+            }
+          }).catch(() => { /* fire-and-forget */ });
+          return;
+        }
+        if (data.status === 'error') {
+          console.log('applySuggestions error:', data.error);
+          return;
+        }
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+
+    // Poll ATS completion and show toast
+    async function pollAtsCompletion(atsTaskId) {
+      while (true) {
+        const res = await fetch(`/generate/task/${atsTaskId}`);
+        const data = await res.json();
+        if (data.status === 'complete') {
+          const toast = document.getElementById('ats-toast');
+          if (toast) {
+            toast.textContent = `ATS analysis ready: ${data.result.coveragePercent}% coverage`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 15000);
+          }
+          return;
+        }
+        if (data.status === 'error') {
+          console.log('ATS error:', data.error);
+          return;
+        }
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+
     function formatDuplicateMessage(data, fallback) {
       const row = data && data.row ? data.row : {};
       const when = row.applied_at || '(unknown)';
@@ -488,6 +554,27 @@
         console.log('Storing lastTaskId:', data.taskId);
         lastTaskId = data.taskId;
         document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
+
+        // Auto-apply suggestions + ATS chain (fire-and-forget)
+        const autoApplyChecked = document.getElementById('autoApplySuggestions')?.checked;
+        if (autoApplyChecked && result.jobDir) {
+          fetch('/generate/applySuggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobDir: result.jobDir,
+              userSuggestions: 'Review and improve this resume',
+              attachedFiles: ['structured-output.json', 'job-description.txt', 'other-input.txt', 'ats-analysis.md'],
+              resumePath: `jobs/${result.jobDir}/structured-output.json`,
+              redactedResumePath: `jobs/${result.jobDir}/structured-output-redacted.json`,
+              modelSelect: document.getElementById('model-select')?.value,
+            }),
+          }).then(res => res.json()).then(data => {
+            if (data.taskId) {
+              pollApplySuggestionsThenAts(data.taskId, result.jobDir);
+            }
+          }).catch(() => { /* fire-and-forget: ignore errors */ });
+        }
 
         // Auto-open resume PDF
         window.open(result.pdfUrl, '_blank');

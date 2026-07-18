@@ -1026,6 +1026,86 @@ router.post('/applySuggestions', (req, res) => {
   });
 });
 
+type RunAtsBackgroundInput = {
+  jobDir: string;
+  atsKeywords?: string[];
+  resumeJSON?: import('../services/types').ResumeData | null;
+};
+
+function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
+  (async () => {
+    try {
+      const { runAtsAiAnalysis, buildAtsAnalysisMarkdown } = await import('../services/atsAiService.js');
+      let resumeJSON = input.resumeJSON;
+      let atsKeywords = input.atsKeywords || [];
+
+      if (!resumeJSON) {
+        const structuredPath = path.join(input.jobDir, 'structured-output.json');
+        if (fs.existsSync(structuredPath)) {
+          try {
+            resumeJSON = JSON.parse(fs.readFileSync(structuredPath, 'utf8')) as import('../services/types').ResumeData;
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      if (atsKeywords.length === 0) {
+        const atsJsonPath = path.join(input.jobDir, 'ats-analysis.json');
+        if (fs.existsSync(atsJsonPath)) {
+          try {
+            const atsData = JSON.parse(fs.readFileSync(atsJsonPath, 'utf8'));
+            atsKeywords = atsData.keywords || [];
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      let coveragePercent: number;
+      try {
+        const outcome = await runAtsAiAnalysis({
+          jobDescription: '',
+          resume: resumeJSON!,
+          jdKeywords: atsKeywords,
+          jobDir: input.jobDir,
+        });
+        coveragePercent = outcome.analysis.coveragePercent;
+        saveJobFile(input.jobDir, 'ats-analysis.json', JSON.stringify(outcome.analysis, null, 2));
+        saveJobFile(input.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(outcome.analysis));
+      } catch (err) {
+        logError('AtsBackground AI error, falling back to regex:', err);
+        const fallback = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON!);
+        coveragePercent = fallback.coveragePercent;
+        const atsAnalysis = { ...fallback, source: 'regex' as const };
+        saveJobFile(input.jobDir, 'ats-analysis.json', JSON.stringify(atsAnalysis, null, 2));
+        saveJobFile(input.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(atsAnalysis));
+      }
+      taskMap.set(taskId, {
+        status: 'complete',
+        startedAt: Date.now(),
+        result: { coveragePercent },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Internal server error';
+      logError('ats background error:', err);
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now() });
+    }
+  })();
+}
+
+router.post('/runAtsBackground', (req, res) => {
+  const { jobDir, atsKeywords, resumeJSON } = req.body as RunAtsBackgroundInput;
+  if (!jobDir || typeof jobDir !== 'string') {
+    res.status(400).json({ error: 'jobDir is required' });
+    return;
+  }
+  if (!Array.isArray(atsKeywords)) {
+    res.status(400).json({ error: 'atsKeywords must be an array' });
+    return;
+  }
+  const taskId = createTaskId();
+  taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
+  res.json({ taskId });
+  runAtsBackground(taskId, { jobDir, atsKeywords: atsKeywords || [], resumeJSON: resumeJSON || null });
+});
+
 function validateGenerateRequest(body: GenerateRequestBody): string | null {
   const { companyName, roleName, jobDescription, generateWithoutJD } = body;
   if (!companyName || !roleName) {
