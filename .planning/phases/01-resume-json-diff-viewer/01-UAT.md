@@ -1,12 +1,12 @@
 ---
-status: diagnosed
+status: complete
 phase: 01-resume-json-diff-viewer
 source:
   - .planning/phases/01-resume-json-diff-viewer/01-03-SUMMARY.md
   - .planning/phases/01-resume-json-diff-viewer/01-02-SUMMARY.md
   - .planning/phases/01-resume-json-diff-viewer/01-01-SUMMARY.md
 started: 2026-07-18T00:58:37Z
-updated: 2026-07-18T01:03:30Z
+updated: 2026-07-18T02:30:00Z
 ---
 
 ## Current Test
@@ -62,17 +62,20 @@ result: pass
 ## Summary
 
 total: 5
-passed: 3
-issues: 2
+passed: 5
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
+fixed-by-gap-closure: 2
 
 ## Gaps
 
 - gap_id: G-01-2
   truth: "Modal opens with a unified diff showing removed lines in red, added lines in green, with --- v1/... and +++ current/... headers; for typical edits the diff is rendered as small focused hunks, not a single block of the whole resume."
-  status: failed
+  status: resolved
+  resolved_by: 01-04-PLAN.md
+  resolved_at: 2026-07-18
   reason: "User reported: modal opens and shows a unified diff, but it dumps the whole resume as a single big changed block instead of 3 small focused hunks. In vscode the same change is 3 small focused blocks with exact changed words highlighted. No red or green colour on added/removed lines."
   severity: major
   test: 2
@@ -94,7 +97,9 @@ blocked: 0
   debug_session: ".planning/debug/diff-rendering-large-block.md"
 - gap_id: G-01-3
   truth: "Modal shows a human-readable summary list of changed paths that is readable (modal wide enough so path entries are not cramped)."
-  status: failed
+  status: resolved
+  resolved_by: 01-04-PLAN.md
+  resolved_at: 2026-07-18
   reason: "User reported: summary list does show, but the modal isn't wide enough — the entries are too cramped. contents observed: 'summary', 'skills.tools', 'experience.0.bullets.0', 'projects.2.bullets.4', 'No changes'."
   severity: cosmetic
   test: 3
