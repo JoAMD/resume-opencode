@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 01
-current_phase_name: resume-json-diff-viewer
-status: executing
-last_updated: "2026-07-18T02:24:36.886Z"
+current_phase: 02
+current_phase_name: version-diff-selector-fire-and-forget-ats-analysis
+status: context-gathered
+last_updated: "2026-07-18T02:45:00.000Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
   total_plans: 4
   completed_plans: 4
@@ -24,13 +24,13 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-18)
 
 **Core value:** The generated resume must be correctly tailored to the job description — semantically, not just by keyword stuffing.
-**Current focus:** Phase 01 — resume-json-diff-viewer
+**Current focus:** Phase 02 — version-diff-selector + fire-and-forget ATS
 
 ## Current Position
 
-- **Phase:** 01 (resume-json-diff-viewer) — EXECUTING
-- **Plan:** 2 of 4
-- **Status:** Ready to execute
+- **Phase:** 02 (version-diff-selector + fire-and-forget ATS) — CONTEXT GATHERED
+- **Status:** Ready for planning
+- **Phase 01:** Complete (4/4 plans executed)
 
 ## Decisions Log
 
@@ -43,6 +43,17 @@ See `.planning/PROJECT.md` ## Key Decisions for the full table. Highlights:
 - **Three open questions in `RESUME_DIFF_VIEWER_PLAN.md` deferred to plan-phase** per user decision; the plan's recommendations (modal, `format=summary`, latest-only) stand as defaults.
 
 ## Accumulated Context
+
+### Phase 02 Context
+
+Phase 02 context gathered: `.planning/phases/02-version-diff-selector-fire-and-forget-ats-analysis/02-CONTEXT.md`
+
+Key decisions:
+- Version diff selector UI below "Search past JDs" with autocomplete folder input + two version dropdowns
+- Auto-chain: Generate → applySuggestions → ATS analysis (all fire-and-forget)
+- Checkbox "Auto-apply suggestions after generation" (checked by default)
+- ATS notification via polling + toast alert
+- Phase 1 UI tweaks (main model fill screen, word diff line numbers) included in Phase 2 scope
 
 ### Codebase map
 
