@@ -75,6 +75,17 @@ These are visible in the project today and intentionally not addressed by this m
 - Tech-debt backlog in `.planning/codebase/CONCERNS.md` (duplicate `/api/read`, `UI_DIST` dead code, `ADMIN_PASSWORD` fail-closed, `RESUME_CHAR_LIMIT` env-var promotion, `strict: false`, etc.).
 - The three open questions in `RESUME_DIFF_VIEWER_PLAN.md` (modal vs inline, `format=summary` first-class, backup-version picker) — deferred to plan-phase per user decision; the plan's recommendations stand as defaults.
 
+### Phase 2: Version diff selector + fire-and-forget ATS analysis
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 1
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 2 to break down)
+
 ---
 *Roadmap created: 2026-07-18*
 *Last updated: 2026-07-18 after brownfield add-on milestone initialization*
