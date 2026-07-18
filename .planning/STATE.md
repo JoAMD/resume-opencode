@@ -1,3 +1,18 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+current_phase: 01
+current_phase_name: resume-json-diff-viewer
+status: executing
+last_updated: "2026-07-18T02:19:37.957Z"
+progress:
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 4
+  completed_plans: 3
+---
+
 # Project State: resume-opencode — Diff Viewer Milestone (M1)
 
 **Initialized:** 2026-07-18
@@ -9,13 +24,13 @@
 See: `.planning/PROJECT.md` (updated 2026-07-18)
 
 **Core value:** The generated resume must be correctly tailored to the job description — semantically, not just by keyword stuffing.
-**Current focus:** Phase 1 — Resume JSON diff viewer (per `docs/plans/RESUME_DIFF_VIEWER_PLAN.md`).
+**Current focus:** Phase 01 — resume-json-diff-viewer
 
 ## Current Position
 
-- **Phase:** 1 of 1 (single-feature milestone)
-- **Plan:** TBD — `/gsd-plan-phase 1` to begin planning
-- **Status:** Ready for planning. Requirements and roadmap are committed; the project instruction file is generated.
+- **Phase:** 01 (resume-json-diff-viewer) — EXECUTING
+- **Plan:** 1 of 4
+- **Status:** Executing Phase 01
 
 ## Decisions Log
 
@@ -30,9 +45,11 @@ See `.planning/PROJECT.md` ## Key Decisions for the full table. Highlights:
 ## Accumulated Context
 
 ### Codebase map
+
 Comprehensive: `ARCHITECTURE.md`, `STACK.md`, `STRUCTURE.md`, `CONVENTIONS.md`, `TESTING.md`, `INTEGRATIONS.md`, `CONCERNS.md` in `.planning/codebase/`. Refreshed 2026-07-18.
 
 ### Plans and deferred work
+
 - `docs/plans/RESUME_DIFF_VIEWER_PLAN.md` — **in scope for this milestone** (Phase 1 source plan).
 - `docs/plans/RESUME_PAGE_LIMIT_UI_PLAN.md` — out of scope (sibling plan).
 - `docs/plans/LLM_PROVIDER_ABSTRACTION_PLAN-unrefined.md` — out of scope (early-stage).
@@ -40,18 +57,21 @@ Comprehensive: `ARCHITECTURE.md`, `STACK.md`, `STRUCTURE.md`, `CONVENTIONS.md`, 
 - `docs/plans/AI_PROMPT_TIMEOUT_PLAN.md` and `docs/plans/OPENCODE_SESSION_KEEP_PLAN.md` — shipped, kept for context.
 
 ### Test approach (per `.planning/codebase/TESTING.md`)
+
 - Vitest 3.2.6 with happy-dom. Co-located `*.test.ts` next to source.
 - For `services/ai.ts`, tests are split per feature (`ai.privacy.test.ts`, etc.).
 - Hermetic `vitest.setup.ts` synthesises gitignored `prompts/` and `templates/`.
 - No coverage runner configured; `vitest run --coverage` would fail without `@vitest/coverage-v8`.
 
 ### Conventions (per `.planning/codebase/CONVENTIONS.md`)
+
 - TypeScript ES2021, NodeNext, `strict: false` (planned tech-debt, out of scope this milestone).
 - Service modules are pure, side-effecty-but-IO-only. No class hierarchy; mostly namespaced functions.
 - New admin routes go behind basic auth and reuse `safeRealpath` + `ensureJobsRootRealpath`.
 - Tests live next to source; vitest is the runner.
 
 ### Security / redaction
+
 - AI ATS analyser is the only AI call that sees a representation of the full resume; it is preceded by PII redaction (`services/redactResume.ts` strips seven PII fields).
 - The new diff viewer route does **not** need redaction — the response is served to the user themselves over a basic-auth-gated, path-allowlisted endpoint. The diff is the user's own data.
 
@@ -66,6 +86,7 @@ Comprehensive: `ARCHITECTURE.md`, `STACK.md`, `STRUCTURE.md`, `CONVENTIONS.md`, 
 ## Next Action
 
 Run `/gsd-plan-phase 1` to begin planning Phase 1. Expected plan shape, per `RESUME_DIFF_VIEWER_PLAN.md` steps 1–5:
+
 - Plan 1: `services/diffUtil.ts` + relocate `canonicalize` / `resumesAreEqual` + `unifiedDiffText` + `summariseJsonDiff` + unit tests.
 - Plan 2: `latestBackupVersion` + `GET /generate/diffResume` route + route tests.
 - Plan 3: UI modal scaffolding + clickable backup link + `openDiffModal` / `closeDiffModal` + manual runbook.
