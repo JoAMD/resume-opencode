@@ -257,9 +257,31 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   }
 
   function renderDiffResponse(data) {
-    diffPre.textContent = data.unifiedDiff || '(no diff)';
+    const diffText = data.unifiedDiff || '(no diff)';
+    diffPre.innerHTML = wrapDiffLinesWithSpans(diffText);
     const paths = (data.summary && data.summary.changedPaths) || [];
     renderDiffPaths(paths);
+  }
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function wrapDiffLinesWithSpans(diffText) {
+    const lines = diffText.split('\n');
+    return lines.map((line) => {
+      if (line.startsWith('-')) {
+        return '<span class="diff-removed">- ' + escapeHtml(line.slice(1)) + '</span>';
+      }
+      if (line.startsWith('+')) {
+        return '<span class="diff-added">+ ' + escapeHtml(line.slice(1)) + '</span>';
+      }
+      return escapeHtml(line);
+    }).join('\n');
   }
 
   async function openDiffModal(version, trigger) {
