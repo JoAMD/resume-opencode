@@ -18,7 +18,7 @@ import {
 } from '../services/jobDescriptionSearch';
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
-import { unifiedDiffText, summariseJsonDiff } from '../services/diffUtil';
+import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
 import { latestBackupVersion } from '../services/backupService';
 
 const router = Router();
@@ -787,7 +787,7 @@ router.get('/redactedResumePath', (req, res) => {
   res.json({ path: null, exists: false });
 });
 
-type DiffResumeFormat = 'unified' | 'summary' | 'both';
+type DiffResumeFormat = 'unified' | 'summary' | 'both' | 'word-diff';
 
 type DiffResumeValidated = {
   realJobDir: string;
@@ -830,7 +830,7 @@ function resolveBackupVersion(backupsRoot: string, queryVersion: string | undefi
   return { ok: true, value: latest };
 }
 
-const DIFF_FORMATS: ReadonlySet<DiffResumeFormat> = new Set(['unified', 'summary', 'both']);
+const DIFF_FORMATS: ReadonlySet<DiffResumeFormat> = new Set(['unified', 'summary', 'both', 'word-diff']);
 
 function resolveDiffFormat(raw: unknown): ValidationFailure | ValidationSuccess<DiffResumeFormat> {
   const formatRaw = typeof raw === 'string' ? raw : 'both';
@@ -905,6 +905,9 @@ function diffResumeHandler(req: Request, res: import('express').Response): void 
   }
   if (v.format === 'summary' || v.format === 'both') {
     response.summary = summariseJsonDiff(backupParsed, currentParsed);
+  }
+  if (v.format === 'word-diff') {
+    response.wordDiffHtml = generateInlineDiff(backupPretty, currentPretty);
   }
   res.status(200).json(response);
 }
