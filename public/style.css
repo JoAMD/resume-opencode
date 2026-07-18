@@ -317,7 +317,8 @@ button[type="submit"]:disabled,
   padding: 1rem;
   width: 90%;
   max-width: 420px;
-  max-height: 60vh;
+  min-height: 80vh;
+  max-height: 95vh;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -450,7 +451,7 @@ button[type="submit"]:disabled,
   font-size: 0.8rem;
   white-space: pre;
   overflow: auto;
-  max-height: 50vh;
+  max-height: 85vh;
 }
 .popover-body .diff-summary {
   background: #0e0e12;
@@ -458,7 +459,7 @@ button[type="submit"]:disabled,
   border-radius: 4px;
   padding: 0.5rem;
   overflow: auto;
-  max-height: 50vh;
+  max-height: 85vh;
 }
 .popover-body .diff-summary h3 {
   margin: 0 0 0.5rem;
@@ -505,7 +506,8 @@ button[type="submit"]:disabled,
 /* Widen the diff modal specifically — the summary column needs room for
    path strings like experience.0.bullets.0 */
 #suggestions-diff-modal .popover-body {
-  max-width: 640px;
+  max-width: 90vw;
+  max-height: 90vw;
 }
 
 .button-link {
