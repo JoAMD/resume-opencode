@@ -117,10 +117,16 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   const diffPre = el('suggestions-diff-pre');
   const diffPaths = el('suggestions-diff-paths');
   const diffEmpty = el('suggestions-diff-empty');
+  const diffViewHunksBtn = el('diff-view-hunks');
+  const diffViewFullBtn = el('diff-view-full');
 
   let lastKnownSlug = null;
   let slugWatchTimer = null;
   let diffModalTrigger = null;
+  let lastUnifiedDiff = '';
+  let cachedWordDiffHtml = null;
+  let currentDiffSlug = '';
+  let currentDiffVersion = '';
 
   function autoAttachDefaults() {
     for (const name of DEFAULT_AUTO_ATTACH) {
@@ -257,10 +263,26 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   }
 
   function renderDiffResponse(data) {
-    const diffText = data.unifiedDiff || '(no diff)';
-    diffPre.innerHTML = wrapDiffLinesWithSpans(diffText);
+    lastUnifiedDiff = data.unifiedDiff || '';
+    switchToHunksView(lastUnifiedDiff);
     const paths = (data.summary && data.summary.changedPaths) || [];
     renderDiffPaths(paths);
+  }
+
+  function switchToHunksView(unifiedDiff) {
+    if (diffViewHunksBtn && diffViewFullBtn) {
+      diffViewHunksBtn.classList.add('active');
+      diffViewFullBtn.classList.remove('active');
+    }
+    diffPre.innerHTML = wrapDiffLinesWithSpans(unifiedDiff || '(no diff)');
+  }
+
+  function switchToFullView(wordDiffHtml) {
+    if (diffViewHunksBtn && diffViewFullBtn) {
+      diffViewHunksBtn.classList.remove('active');
+      diffViewFullBtn.classList.add('active');
+    }
+    diffPre.innerHTML = wordDiffHtml;
   }
 
   function escapeHtml(str) {
@@ -291,6 +313,9 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       return;
     }
     diffModalTrigger = trigger || null;
+    currentDiffSlug = slug;
+    currentDiffVersion = String(version);
+    cachedWordDiffHtml = null;
     diffTitle.textContent = `Job: ${slug} · Backup: v${version}`;
     diffPre.textContent = 'Loading…';
     renderDiffPaths([]);
@@ -330,6 +355,37 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   diffModalRoot.addEventListener('click', (e) => {
     if (e.target === diffModalRoot) closeDiffModal();
   });
+  if (diffViewHunksBtn) {
+    diffViewHunksBtn.addEventListener('click', () => {
+      switchToHunksView(lastUnifiedDiff);
+    });
+  }
+  if (diffViewFullBtn) {
+    diffViewFullBtn.addEventListener('click', async () => {
+      if (cachedWordDiffHtml) {
+        switchToFullView(cachedWordDiffHtml);
+        return;
+      }
+      if (!currentDiffSlug || !currentDiffVersion) {
+        diffPre.innerHTML = '(full file diff unavailable)';
+        return;
+      }
+      diffPre.innerHTML = '<span style="color:#888">Loading full file view…</span>';
+      try {
+        const url = `/generate/diffResume?jobDir=${encodeURIComponent(currentDiffSlug)}&version=v${currentDiffVersion}&format=word-diff`;
+        const res = await fetch(url);
+        const data = await res.json().catch(() => ({}));
+        if (data.wordDiffHtml) {
+          cachedWordDiffHtml = data.wordDiffHtml;
+          switchToFullView(cachedWordDiffHtml);
+        } else {
+          diffPre.innerHTML = '(full file diff unavailable)';
+        }
+      } catch {
+        diffPre.innerHTML = '(failed to load full file diff)';
+      }
+    });
+  }
   changeBtn.addEventListener('click', () => {
     const slug = prompt('Enter job folder slug (the part after jobs/)', getJobSlug() || '');
     if (slug && slug.trim()) {
