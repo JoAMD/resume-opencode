@@ -12,16 +12,23 @@
 ## Phases
 
 ### Phase 1: Resume JSON diff viewer
+
 **Goal:** Ship the in-app diff viewer end-to-end: shared `diffUtil`, `GET /generate/diffResume` route, clickable backup link in the suggestions panel, modal viewer, docs sync, and a clean Code Health safeguard.
 **Mode:** standard
 **Requirements:** DIFF-01, DIFF-02, DIFF-03, DIFF-04, DIFF-04b, DIFF-05, DIFF-05b, DIFF-06, DIFF-07a, DIFF-07b, DIFF-08a, DIFF-08b, DIFF-08c, DIFF-09a, DIFF-09b, DIFF-10 (16 v1 requirements)
 **Success Criteria:**
+
 1. `services/diffUtil.ts` exists; `fixSuggestionsService.ts` imports `resumesAreEqual` from it; the local copy is gone. `unifiedDiffText` and `summariseJsonDiff` have unit tests in `services/diffUtil.test.ts`.
 2. `GET /generate/diffResume?jobDir=…&version=…&format=unified|summary|both` returns 200 on a known job with a known backup, 404 with a named error when the backup or current is missing, 400 on bad `jobDir` / `version` / path-traversal, and the response shape matches the plan. `latestBackupVersion` is added to `services/backupService.ts`.
 3. The suggestions panel's "Backup: …" text becomes a clickable control; clicking opens a modal that shows the unified diff and a `summary.changedPaths` bullet list. Close via button or click-outside. No new CSS framework. Prefer built-ins for trivial cases; use well-tested libraries for complex problems.
 4. `README.md` and `docs/FEATURES.md` are updated in the same commit as the feature. `npm test` and `npm run build` are clean. `pre_commit_code_health_safeguard` reports no regression. The manual runbook in `RESUME_DIFF_VIEWER_PLAN.md` steps 1–5 has been executed and observed.
 
-**Plans:** 4 plans (gap-closure plan added for G-01-2 and G-01-3)
+**Plans:** 4/4 plans executed
+
+- [x] 01-01-PLAN.md
+- [x] 01-02-PLAN.md
+- [x] 01-03-PLAN.md
+- [x] 01-04-PLAN.md
 - Plan 1: `services/diffUtil.ts` + relocate `canonicalize` / `resumesAreEqual` + add `unifiedDiffText` + `summariseJsonDiff` + unit tests.
 - Plan 2: `latestBackupVersion` + `GET /generate/diffResume` route + route tests.
 - Plan 3: UI modal scaffolding + clickable backup link + `openDiffModal` / `closeDiffModal` + manual runbook.
@@ -51,6 +58,7 @@
 | DIFF-10 | Phase 1 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 16 total
 - Mapped to phases: 16
 - Unmapped: 0 ✓
