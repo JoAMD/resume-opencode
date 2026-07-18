@@ -1,4 +1,13 @@
 // services/diffUtil.ts — shared diff helpers for the in-app resume diff viewer (RESUME_DIFF_VIEWER_PLAN.md Step 1).
+import { structuredPatch, diffWords } from 'diff';
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -38,18 +47,38 @@ function countCommonSuffix(pair: LinePair, prefix: number): number {
 
 function unifiedDiffText(a: string, b: string, labelA: string, labelB: string): string {
   if (a === b) return '';
-  const pair: LinePair = { before: a.split('\n'), after: b.split('\n') };
-  const prefix = countCommonPrefix(pair);
-  const suffix = countCommonSuffix(pair, prefix);
-  const beforeMiddle = pair.before.slice(prefix, pair.before.length - suffix);
-  const afterMiddle = pair.after.slice(prefix, pair.after.length - suffix);
-  const header = `@@ -${prefix + 1},${beforeMiddle.length} +${prefix + 1},${afterMiddle.length} @@`;
-  const out: string[] = [`--- ${labelA}`, `+++ ${labelB}`, header];
-  for (const line of pair.before.slice(0, prefix)) out.push(` ${line}`);
-  for (const line of beforeMiddle) out.push(`-${line}`);
-  for (const line of afterMiddle) out.push(`+${line}`);
-  for (const line of pair.before.slice(pair.before.length - suffix)) out.push(` ${line}`);
-  return out.join('\n') + '\n';
+  const result = structuredPatch(labelA, labelB, a, b, '', '', { context: 3 });
+  if (!result.hunks || result.hunks.length === 0) {
+    return '';
+  }
+  const header = `--- ${labelA}\n+++ ${labelB}\n`;
+  const hunks = result.hunks.map((hunk) => {
+    const hunkLines = hunk.lines.map((line) => {
+      const prefix = line[0];
+      const content = line.slice(1);
+      if (prefix === '-') return `-${content}`;
+      if (prefix === '+') return `+${content}`;
+      return ` ${content}`;
+    }).join('\n');
+    return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@\n${hunkLines}`;
+  }).join('\n');
+  return header + hunks + '\n';
+}
+
+function generateInlineDiff(oldStr: string, newStr: string): string {
+  if (oldStr === newStr) {
+    return escapeHtml(newStr);
+  }
+  const changes = diffWords(oldStr, newStr);
+  return changes.map((part) => {
+    if (part.added) {
+      return `<span class="word-added">${escapeHtml(part.value)}</span>`;
+    }
+    if (part.removed) {
+      return `<span class="word-removed">${escapeHtml(part.value)}</span>`;
+    }
+    return escapeHtml(part.value);
+  }).join('');
 }
 
 interface DiffSummary {
@@ -123,4 +152,4 @@ function summariseJsonDiff(a: unknown, b: unknown): DiffSummary {
   return acc;
 }
 
-export { canonicalize, resumesAreEqual, unifiedDiffText, summariseJsonDiff };
+export { canonicalize, resumesAreEqual, unifiedDiffText, summariseJsonDiff, generateInlineDiff };

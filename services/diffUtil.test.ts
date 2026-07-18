@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canonicalize, resumesAreEqual, unifiedDiffText, summariseJsonDiff } from './diffUtil.js';
+import { canonicalize, resumesAreEqual, unifiedDiffText, summariseJsonDiff, generateInlineDiff } from './diffUtil.js';
 
 describe('canonicalize', () => {
   it('produces a stable string for an object regardless of key order', () => {
@@ -74,6 +74,25 @@ describe('unifiedDiffText', () => {
     expect(elapsedIdentical).toBeLessThan(50);
     expect(elapsedChanged).toBeLessThan(50);
   });
+
+  it('produces separate hunks for multiple disjoint changes', () => {
+    const linesA: string[] = [];
+    const linesB: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      linesA.push(`line${i}`);
+      linesB.push(`line${i}`);
+    }
+    linesB[2] = 'MODIFIED-A';
+    linesB[15] = 'MODIFIED-B';
+    const a = linesA.join('\n') + '\n';
+    const b = linesB.join('\n') + '\n';
+    const out = unifiedDiffText(a, b, 'a', 'b');
+    const hunkCount = (out.match(/^@@ /gm) || []).length;
+    expect(hunkCount).toBe(2);
+    const contextLines = (out.match(/^ /gm) || []).length;
+    expect(contextLines).toBeGreaterThanOrEqual(4);
+    expect(out).toMatch(/@@ -\d+,\d+ \+\d+,\d+ @@/g);
+  });
 });
 
 describe('summariseJsonDiff', () => {
@@ -100,5 +119,33 @@ describe('summariseJsonDiff', () => {
     expect(r.changedPaths).toContain('contact.email');
     expect(r.addedKeys).toEqual([]);
     expect(r.removedKeys).toEqual([]);
+  });
+});
+
+describe('generateInlineDiff', () => {
+  it('returns escaped text unchanged when strings are identical', () => {
+    const out = generateInlineDiff('hello world', 'hello world');
+    expect(out).toBe('hello world');
+    expect(out).not.toContain('<span');
+  });
+
+  it('wraps an added word in word-added span', () => {
+    const out = generateInlineDiff('hello world', 'hello universe');
+    expect(out).toContain('<span class="word-added">universe</span>');
+    expect(out).toContain('hello ');
+  });
+
+  it('wraps a removed word in word-removed span', () => {
+    const out = generateInlineDiff('hello universe', 'hello world');
+    expect(out).toContain('<span class="word-removed">universe</span>');
+    expect(out).toContain('hello ');
+  });
+
+  it('marks multiple changed words individually', () => {
+    const out = generateInlineDiff('foo bar baz', 'FOO bar BAZ');
+    expect(out).toContain('<span class="word-removed">foo</span>');
+    expect(out).toContain('<span class="word-added">FOO</span>');
+    expect(out).toContain('<span class="word-removed">baz</span>');
+    expect(out).toContain('<span class="word-added">BAZ</span>');
   });
 });
