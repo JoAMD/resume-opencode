@@ -1,5 +1,5 @@
 ---
-status: partial
+status: diagnosed
 phase: 02-version-diff-selector-fire-and-forget-ats-analysis
 source:
   - .planning/phases/02-version-diff-selector-fire-and-forget-ats-analysis/02-01-SUMMARY.md
@@ -10,7 +10,7 @@ updated: 2026-07-18T00:00:00Z
 
 ## Current Test
 
-[testing paused — 1 issue outstanding]
+[testing paused — 1 issue diagnosed]
 
 ## Tests
 
@@ -88,9 +88,16 @@ blocked: 0
   reason: "User reported: Line numbers are in hunks mode, not full file mode"
   severity: major
   test: 5
-  artifacts: []
-  missing: []
-  debug_session: ""
+  root_cause: "wrapDiffLinesWithSpans in public/suggestions.js uses idx+1 (array index) instead of parsing @@ hunk headers for actual file line numbers"
+  artifacts:
+    - path: "public/suggestions.js"
+      issue: "Line numbers reset to 1 at each hunk instead of running sequentially across full file"
+      lines: "296-312"
+  missing:
+    - "Parse @@ -X,Y +Z,W @@ hunk headers to extract starting line numbers"
+    - "Maintain oldLine and newLine counters across all hunks"
+    - "Use actual file line numbers instead of array indices"
+  debug_session: ".planning/debug/diff-modal-narrow.md"
 
 ## Deferred Follow-Ups
 
