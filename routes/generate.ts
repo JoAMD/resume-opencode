@@ -764,9 +764,11 @@ function listBackupsHandler(req: Request, res: import('express').Response): void
     res.status(404).json({ error: 'Job directory not found' });
     return;
   }
+  const structuredPath = path.join(resolved, 'structured-output.json');
+  const hasCurrent = fs.existsSync(structuredPath);
   const backupsRoot = path.join(resolved, 'backups');
   const versions = listBackupVersions(backupsRoot);
-  res.json({ versions });
+  res.json({ versions, hasCurrent });
 }
 
 router.get('/listJobDirs', listJobDirsHandler);

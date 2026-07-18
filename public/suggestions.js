@@ -577,14 +577,26 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
         if (!res.ok) return;
         const data = await res.json();
         const versions = data.versions || [];
-        const opts = versions.map(v => `<option value="${v}">v${v}</option>`).join('');
-        vdsSourceVersion.innerHTML = opts;
-        vdsTargetVersion.innerHTML = opts;
+        const hasCurrent = data.hasCurrent;
+        const opts = [];
+        if (hasCurrent) opts.push('<option value="0">current</option>');
+        versions.forEach(v => opts.push(`<option value="${v}">v${v}</option>`));
+        const html = opts.join('');
+        vdsSourceVersion.innerHTML = html;
+        vdsTargetVersion.innerHTML = html;
         vdsSourceVersion.disabled = false;
         vdsTargetVersion.disabled = false;
-        if (versions.length >= 2) {
-          vdsSourceVersion.value = versions[versions.length - 2];
-          vdsTargetVersion.value = versions[versions.length - 1];
+        if (versions.length >= 1 || hasCurrent) {
+          if (hasCurrent && versions.length >= 1) {
+            vdsSourceVersion.value = versions[versions.length - 1];
+            vdsTargetVersion.value = '0';
+          } else if (versions.length >= 2) {
+            vdsSourceVersion.value = versions[versions.length - 2];
+            vdsTargetVersion.value = versions[versions.length - 1];
+          } else if (versions.length === 1) {
+            vdsSourceVersion.value = versions[0];
+            vdsTargetVersion.value = hasCurrent ? '0' : versions[0];
+          }
           vdsDiffBtn.disabled = false;
         }
       } catch (e) { /* ignore */ }
@@ -621,8 +633,13 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       const folder = vdsFolderInput.value.trim();
       const sourceVersion = vdsSourceVersion.value;
       const targetVersion = vdsTargetVersion.value;
-      if (!folder || !sourceVersion || !targetVersion) return;
-      openDiffModal(targetVersion, vdsDiffBtn, folder);
+      if (!folder || (!sourceVersion && !targetVersion)) return;
+      const v0 = sourceVersion === '0' || targetVersion === '0';
+      const backupVersion = v0
+        ? (sourceVersion === '0' ? targetVersion : sourceVersion)
+        : (targetVersion || sourceVersion);
+      if (!backupVersion || backupVersion === '0') return;
+      openDiffModal(backupVersion, vdsDiffBtn, folder);
     });
   }
 }
