@@ -416,6 +416,24 @@ button[type="submit"]:disabled,
   justify-content: space-between;
   gap: 0.5rem;
 }
+.diff-view-toggle {
+  display: flex;
+  gap: 0.25rem;
+}
+.diff-view-toggle .button-tiny {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+}
+.diff-view-toggle .button-tiny.active {
+  background: #2e2e3e;
+  color: #e8e8e8;
+  border-color: #4a4a5a;
+}
 .popover-body .diff-body {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
@@ -458,6 +476,38 @@ button[type="submit"]:disabled,
   color: #e8e8e8;
   padding: 0.15rem 0;
 }
+
+/* Line-level coloring for the Hunks view (diff-removed / diff-added). */
+.popover-body .diff-pre .diff-removed {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+.popover-body .diff-pre .diff-added {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+}
+.popover-body .diff-pre .diff-context {
+  color: #9ca3af;
+}
+
+/* Word-level coloring for the Full file view. More saturated so the spans
+   stand out within an already-colored line. */
+.popover-body .diff-pre .word-removed {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.25);
+  text-decoration: line-through;
+}
+.popover-body .diff-pre .word-added {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.25);
+}
+
+/* Widen the diff modal specifically — the summary column needs room for
+   path strings like experience.0.bullets.0 */
+#suggestions-diff-modal .popover-body {
+  max-width: 640px;
+}
+
 .button-link {
   background: transparent;
   color: #7db8f7;
