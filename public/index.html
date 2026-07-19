@@ -719,11 +719,13 @@
       });
     });
 
-    // Append new context to base path instead of replacing
-    folderPathInput.addEventListener('input', (e) => {
+    folderPathInput.addEventListener('blur', (e) => {
       const currentValue = e.target.value;
-      if (!currentValue.startsWith(globalThis.__JOBS_PATH__)) {
-        e.target.value = globalThis.__JOBS_PATH__ + '/' + currentValue;
+      const basePath = globalThis.__JOBS_PATH__ + '/';
+      if (!currentValue && globalThis.__JOBS_PATH__) {
+        e.target.value = basePath;
+      } else if (currentValue && !currentValue.startsWith(basePath) && currentValue !== globalThis.__JOBS_PATH__) {
+        e.target.value = basePath + currentValue;
       }
     });
 
