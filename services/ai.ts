@@ -692,11 +692,37 @@ interface ParseResultResult {
   usedStructuredOutput: boolean;
 }
 
+function deepParseJsonStrings(obj: any): any {
+  if (typeof obj === 'string') {
+    const trimmed = obj.trim();
+    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+        (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return obj;
+      }
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(deepParseJsonStrings);
+  }
+  if (obj && typeof obj === 'object') {
+    const result: any = {};
+    for (const [k, v] of Object.entries(obj)) {
+      result[k] = deepParseJsonStrings(v);
+    }
+    return result;
+  }
+  return obj;
+}
+
 function parseStructuredResult(result: any, jsonSchema?: object): ParseResultResult | null {
   if (jsonSchema && result.data?.info?.structured) {
     console.log('\n========== OPENCODE DONE (structured) ==========\n');
     return {
-      structured: result.data.info.structured,
+      structured: deepParseJsonStrings(result.data.info.structured),
       rawText: '',
       usedStructuredOutput: true
     };
