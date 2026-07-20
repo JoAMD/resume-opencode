@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 
 const sessionCalls: Array<{ method: string; sessionId?: string }> = [];
+const promptBodies: Array<{ sessionId?: string; body: any }> = [];
 let sessionCounter = 0;
 let mockClient: any;
 let mockStructuredResponse: any = null;
@@ -77,6 +78,7 @@ function buildMockClient() {
   });
   client.session.prompt.mockImplementation(async (opts: any) => {
     sessionCalls.push({ method: 'prompt', sessionId: opts?.path?.id });
+    promptBodies.push({ sessionId: opts?.path?.id, body: opts?.body });
     return {
       data: {
         info: {
@@ -100,6 +102,7 @@ function buildMockClient() {
 async function loadModule(envOverrides: Record<string, string | undefined> = {}) {
   vi.resetModules();
   sessionCalls.length = 0;
+  promptBodies.length = 0;
   sessionCounter = 0;
   mockClient = undefined;
   mockStructuredResponse = null;
@@ -184,7 +187,7 @@ describe('enforceResumeCharLimit', () => {
   it('returns immediately with false when resume is under limit', async () => {
     const { enforceResumeCharLimit } = await loadModule();
     const small = buildSmallResume();
-    const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', tmpLogDir);
+    const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
     expect(result.characterCountTrimmed).toBe('false');
     expect(sessionCalls.filter((c) => c.method === 'prompt')).toHaveLength(0);
   });
@@ -237,16 +240,51 @@ describe('enforceResumeCharLimit', () => {
     expect(calls.prompts).toHaveLength(1);
     expect(calls.creates[0].sessionId).toBe(calls.prompts[0].sessionId);
   });
+
+  it('passes the job folder path into the trim user content', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const jobDir = '/home/user/jobs/shopify-swe';
+    const { enforceResumeCharLimit } = await loadModule();
+    mockStructuredResponse = buildSmallResume();
+    await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+    const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
+    expect(prompts).toHaveLength(1);
+    const fullPrompt = prompts[0].body.parts[0].text;
+    expect(fullPrompt).toContain(`JOB FOLDER (only directory you may read from or write to): ${jobDir}`);
+    expect(fullPrompt).not.toContain('JOB FOLDER (only directory you may read from or write to): /tmp');
+  });
+
+  it('omits the JOB FOLDER line when jobDir is not provided', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const { enforceResumeCharLimit } = await loadModule();
+    mockStructuredResponse = buildSmallResume();
+    await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
+    const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
+    expect(prompts).toHaveLength(1);
+    const fullPrompt = prompts[0].body.parts[0].text;
+    expect(fullPrompt).not.toContain('JOB FOLDER (only directory you may read from or write to):');
+  });
+});
+
+describe('trim-resume-prompt.txt system prompt', () => {
+  it('forbids /tmp and other paths and confines file access to the current job folder', () => {
+    const promptPath = path.resolve(__dirname, '..', 'prompts', 'trim-resume-prompt.txt');
+    const content = fs.readFileSync(promptPath, 'utf8');
+    expect(content).toContain('Do not access `/tmp`');
+    expect(content).toContain('ONLY directory you may read from or write to');
+    expect(content).toMatch(/current job folder/);
+    expect(content).toContain('count-characters');
+  });
 });
 
 async function runTrimTestCase(
-  enforceResumeCharLimit: (resume: any, model: string, logDir: string) => Promise<any>,
+  enforceResumeCharLimit: (resume: any, model: string, options: { promptLogDir: string }) => Promise<any>,
   mockNextResponse: any,
   _limit: number
 ) {
   const big = buildOversizedResume();
   mockStructuredResponse = mockNextResponse;
-  return enforceResumeCharLimit(big, 'opencode-go/minimax-m2.7', fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')));
+  return enforceResumeCharLimit(big, 'opencode-go/minimax-m2.7', { promptLogDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')) });
 }
 
 async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: string; providedSessionId?: string }) {
@@ -254,7 +292,7 @@ async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: stri
   process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = String(args.maxAttempts);
   const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
   mockStructuredResponse = buildOversizedResume();
-  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', args.logDir, args.providedSessionId);
+  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: args.logDir, providedSessionId: args.providedSessionId });
   expect(result.characterCountTrimmed).toBe('true');
   expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
   return {

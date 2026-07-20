@@ -18,6 +18,10 @@ understand the current surface without reading the source or the git log.
   to `OPENCODE_RESUME_TRIM_MAX_ATTEMPTS` (default 3) times, reusing the same
   OpenCode session. If all attempts fail the result is returned with
   `characterCountTrimmed: "true"`.
+- The trim prompt is told the absolute path of the current job folder and
+  instructed to restrict all file reads and writes (including any scratch file
+  used for the `count-characters` tool) to that folder. `/tmp` and other paths
+  are explicitly forbidden in the system prompt.
 
 ## Cover letter generation
 

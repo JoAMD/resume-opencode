@@ -1165,6 +1165,7 @@ function buildGenerationOptions(body: GenerateRequestBody, jobDirPath: string) {
     lowTokenMode: Boolean(body.lowTokenMode),
     modelSelect: body.modelSelect,
     promptLogDir: jobDirPath,
+    jobDir: jobDirPath,
     useStarMethodForGovtRoles: Boolean(body.useStarMethodForGovtRoles),
     resumeType: body.resumeType as 'software' | 'qa' | undefined,
     coverOutput: resolveCoverOutput(body.coverOutput),
@@ -1185,7 +1186,7 @@ async function executeGeneration(
   let sessionId: string;
   let coverLetterSessionId: string | undefined;
 
-  const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir };
+  const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir, jobDir: jobDir.jobDir };
 
   if (useCombinedGeneration !== false && coverOutput !== 'none') {
     const combined = await generateCombinedJSON(jobDescription ?? '', extraNotes ?? '', companyName ?? '', roleName ?? '', false, options);

@@ -94,10 +94,10 @@ export async function finalizeResume(
   structured: unknown,
   model: string,
   promptLogDir: string | undefined,
-  meta: { callerLabel: string; providedSessionId?: string }
+  meta: { callerLabel: string; providedSessionId?: string; jobDir?: string }
 ): Promise<ResumeData> {
   const initial = applyProfileOverrides(structured);
-  const resume = await enforceResumeCharLimit(initial, model, promptLogDir, meta.providedSessionId);
+  const resume = await enforceResumeCharLimit(initial, model, { promptLogDir, providedSessionId: meta.providedSessionId, jobDir: meta.jobDir });
   log(`${meta.callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
   return resume;
 }
@@ -166,9 +166,9 @@ const RESUME_TRIM_JSON_SCHEMA = {
 export async function enforceResumeCharLimit(
   resume: ResumeData,
   model: string,
-  promptLogDir?: string,
-  providedSessionId?: string
+  options: { promptLogDir?: string; providedSessionId?: string; jobDir?: string } = {}
 ): Promise<ResumeData> {
+  const { promptLogDir, providedSessionId, jobDir } = options;
   let current = resume;
   let count = getResumeCharCount(current);
 
@@ -179,7 +179,7 @@ export async function enforceResumeCharLimit(
   log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS, 'providedSessionId:', providedSessionId ?? '<none>');
 
   for (let attempt = 1; attempt <= RESUME_TRIM_MAX_ATTEMPTS; attempt++) {
-    const userContent = `CURRENT RESUME (already tailored):\n${JSON.stringify(current, null, 2)}\n\nCURRENT CHARACTER COUNT: ${count}\nCHARACTER LIMIT: ${RESUME_CHAR_LIMIT}\n\nReturn a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`;
+    const userContent = `CURRENT RESUME (already tailored):\n${JSON.stringify(current, null, 2)}\n\nCURRENT CHARACTER COUNT: ${count}\nCHARACTER LIMIT: ${RESUME_CHAR_LIMIT}\n${jobDir ? `JOB FOLDER (only directory you may read from or write to): ${jobDir}\n` : ''}\nReturn a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`;
 
     let result: RunOpenCodeResult;
     try {
@@ -1146,7 +1146,7 @@ export interface GenerateCombinedResult {
 export async function generateResumeJSON(
   jobDescription: string,
   extraNotes: string,
-  context?: { companyName?: string; roleName?: string; generateWithoutJD?: boolean; promptLogDir?: string },
+  context?: { companyName?: string; roleName?: string; generateWithoutJD?: boolean; promptLogDir?: string; jobDir?: string },
   options?: { lowTokenMode?: boolean; modelSelect?: string; resumeType?: 'software' | 'qa' }
 ): Promise<GenerateResumeResult> {
   log('generateResumeJSON (opencode) called, lowTokenMode:', options?.lowTokenMode, 'model:', options?.modelSelect, 'resumeType:', options?.resumeType);
@@ -1163,7 +1163,7 @@ export async function generateResumeJSON(
     });
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
-    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, { callerLabel: 'generateResumeJSON', providedSessionId: result.sessionId });
+    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, { callerLabel: 'generateResumeJSON', providedSessionId: result.sessionId, jobDir: context?.jobDir });
     return {
       resume,
       sessionId: result.sessionId,
@@ -1237,7 +1237,7 @@ export async function generateCombinedJSON(
   companyName: string,
   roleName: string,
   generateWithoutJD?: boolean,
-  options?: { lowTokenMode?: boolean; modelSelect?: string; promptLogDir?: string; useStarMethodForGovtRoles?: boolean; resumeType?: 'software' | 'qa' }
+  options?: { lowTokenMode?: boolean; modelSelect?: string; promptLogDir?: string; jobDir?: string; useStarMethodForGovtRoles?: boolean; resumeType?: 'software' | 'qa' }
 ): Promise<GenerateCombinedResult> {
   log('generateCombinedJSON (opencode) called, model:', options?.modelSelect, 'lowTokenMode:', options?.lowTokenMode, 'starMethod:', options?.useStarMethodForGovtRoles, 'resumeType:', options?.resumeType);
 
@@ -1267,7 +1267,7 @@ export async function generateCombinedJSON(
     assertValidCoverLetter(result.structured.coverLetter);
     const coverLetterRaw = result.structured.coverLetter;
 
-    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId });
+    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId, jobDir: options?.jobDir });
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],

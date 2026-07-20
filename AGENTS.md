@@ -8,6 +8,10 @@
 - If Code Health regresses or violates goals, **refactor — don't declare done.**
 - Use Code Health to guide **incremental, high-impact refactorings.**
 - When in doubt, **call the appropriate CodeScene MCP tool — don't guess.**
+- **Prompts and templates are owned by the parent monorepo.** When a change
+  touches `prompts/*.txt` or `templates/*`, commit it there first (or
+  alongside this repo) — this repo's `.gitignore` excludes those paths.
+  See the "Dual-commit workflow" section below.
 
 ---
 
@@ -127,3 +131,34 @@ by the parent monorepo (`$HOME/src/copilot/`) and synced
 in via symlink or copy when a new worktree is set up. See
 [`docs/IGNORED_FILES.md`](docs/IGNORED_FILES.md) for the rationale and
 the setup commands to run after creating a new worktree.
+
+---
+
+# Dual-commit workflow (prompts + templates)
+
+A change that touches a prompt or template is **two commits**, not one:
+
+1. **Parent monorepo** (`$HOME/src/copilot/`) — edit and commit
+   `resume-opencode/prompts/<file>.txt` (or `resume-tool/templates/...`).
+   The path is versioned there; it is the source of truth.
+2. **This repo** (`$HOME/src/copilot/resume-opencode/`) — commit the
+   code, tests, and docs that consume the new prompt/template.
+
+The two commits should land in the same push so the worktree stays
+consistent. If the code change is mechanical (e.g. "thread `jobDir`
+into a prompt"), it is fine to combine steps 1 and 2 into a single
+parent commit that includes both `resume-opencode/prompts/...` and
+`resume-opencode/services/...` hunks.
+
+**Common mistakes to avoid:**
+
+- `git add -f prompts/...` in this repo — that would defeat the
+  single-source-of-truth rule documented in
+  [`docs/IGNORED_FILES.md`](docs/IGNORED_FILES.md).
+- Committing a code change that depends on new prompt wording without
+  also updating the prompt in the parent monorepo — the next
+  `cp -r ../resume-opencode/prompts ./prompts` in a fresh worktree
+  will silently undo the prompt edit.
+- Forgetting to test after the prompt change lands in the parent —
+  prompt wording is part of the system contract; small phrasing
+  changes can flip the model into a different behaviour path.
