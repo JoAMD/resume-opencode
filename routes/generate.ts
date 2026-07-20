@@ -20,6 +20,7 @@ import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fix
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
 import { latestBackupVersion, listBackupVersions, listJobDirs } from '../services/backupService';
+import { loadOtherInputFromDir } from '../services/jobDir';
 
 const router = Router();
 
@@ -524,6 +525,7 @@ router.post('/markApplied', async (req, res) => {
       job_dir?: string;
     };
     log(`markApplied called: folderPath="${folderPath}", taskId="${taskId}"`);
+    log(`markApplied req.body: ${JSON.stringify({ company, role, link, job_dir })}`);
 
     const targetDir = resolveTargetDir({ folderPath, taskId, lastTexPath: lastGeneratedTexPath });
 
@@ -544,10 +546,12 @@ router.post('/markApplied', async (req, res) => {
       return;
     }
 
+    const otherInput = loadOtherInputFromDir(targetDir);
+    log(`markApplied otherInput from job dir: ${JSON.stringify(otherInput)}`);
     const csvResult = appendApplication({
-      company: company ?? '',
-      role: role ?? '',
-      link: link ?? '',
+      company: company || otherInput?.companyName || '',
+      role: role || otherInput?.roleName || '',
+      link: link || otherInput?.link || '',
       job_dir: job_dir ?? path.basename(newDir),
     });
 

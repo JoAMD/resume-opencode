@@ -85,6 +85,26 @@ export function loadJobDescriptionFromDir(dirPath: string): string | null {
   return null;
 }
 
+export interface OtherInputData {
+  companyName: string;
+  roleName: string;
+  link: string;
+}
+
+export function loadOtherInputFromDir(dirPath: string): OtherInputData | null {
+  const filePath = path.join(dirPath, 'other-input.txt');
+  if (!fs.existsSync(filePath)) return null;
+  const content = fs.readFileSync(filePath, 'utf8');
+  const result: OtherInputData = { companyName: '', roleName: '', link: '' };
+  for (const line of content.split('\n')) {
+    if (line.startsWith('Company Name: ')) result.companyName = line.slice('Company Name: '.length).trim();
+    else if (line.startsWith('Role / Title: ')) result.roleName = line.slice('Role / Title: '.length).trim();
+    else if (line.startsWith('Job posting link: ')) result.link = line.slice('Job posting link: '.length).trim();
+  }
+  if (!result.companyName && !result.roleName && !result.link) return null;
+  return result;
+}
+
 export function findLatestTexFile(jobsDir?: string): string | null {
   const dir = jobsDir ?? getJobsDir();
   if (!fs.existsSync(dir)) return null;
