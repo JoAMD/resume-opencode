@@ -393,6 +393,9 @@
         const res = await fetch(`/generate/task/${applyTaskId}`);
         const data = await res.json();
         if (data.status === 'complete') {
+          window.dispatchEvent(new CustomEvent('auto-apply-complete', {
+            detail: { taskResult: data.result },
+          }));
           // Fire ATS background
           fetch('/generate/runAtsBackground', {
             method: 'POST',

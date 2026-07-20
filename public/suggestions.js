@@ -565,6 +565,20 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
     } catch (e) { console.error('clipboard write failed', e); }
   });
 
+  window.addEventListener('auto-apply-complete', ({ detail }) => {
+    const { taskResult } = detail;
+    if (!taskResult) return;
+    showResult({
+      pdfUrl: taskResult.pdfUrl,
+      sessionId: taskResult.sessionId,
+      webLink: taskResult.webLink,
+      backupPath: taskResult.backupPath,
+      backupVersion: taskResult.backupVersion,
+    });
+    setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
+    playSound('success');
+  });
+
   refreshSlug();
   startSlugWatcher();
 
