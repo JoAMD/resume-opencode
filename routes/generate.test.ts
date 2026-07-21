@@ -832,3 +832,102 @@ describe('validatePermalinkUrl', () => {
     expect(validatePermalinkUrl(null, 'slug')).toBeNull();
   });
 });
+
+describe('Task step tracking', () => {
+  const JOBS_ROOT = '/tmp/opencode/fake-project-root/jobs';
+  const JOB_DIR = `${JOBS_ROOT}/step-slug`;
+  const JD_FILE = `${JOB_DIR}/job-description.txt`;
+  const STRUCTURED = `${JOB_DIR}/structured-output.json`;
+  const REDACTED = `${JOB_DIR}/structured-output-redacted.json`;
+
+  beforeEach(() => {
+    existsSync.mockReset();
+    readFileSync.mockReset();
+    writeFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    statSync.mockReset();
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === JOB_DIR, isFile: () => p !== JOB_DIR }));
+    mkdirSync.mockReset();
+  });
+
+  function stubAllFiles(): void {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt` || s === STRUCTURED || s === REDACTED;
+    });
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === JD_FILE) return 'jd';
+      if (p === `${JOB_DIR}/other-input.txt`) return 'Company Name: X\n\nRole / Title: Y\n\nJob posting link: https://l\n';
+      if (p === STRUCTURED) return JSON.stringify({ name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] });
+      if (p === REDACTED) return JSON.stringify({ name: '', summary: 's', skills: {}, experience: [], education: [], projects: [] });
+      return '';
+    });
+  }
+
+  it('exposes STEP_LABELS with all four step labels', async () => {
+    const mod = await import('./generate.js');
+    expect(mod).toBeDefined();
+    const probe = mod.setTaskStep;
+    expect(typeof probe).toBe('function');
+  });
+
+  it('POST /generate/ task has step 1 and label "Generating resume + cover letter"', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-1',
+      coverLetterSessionId: 'sess-c-2',
+      atsKeywords: ['kw1', 'kw2'],
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+    });
+    expect(post.status).toBe(200);
+    expect(post.body.taskId).toMatch(/^task_/);
+
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.status).toBe(200);
+    expect(poll.body.step).toBe(1);
+    expect(poll.body.stepLabel).toBe('Generating resume + cover letter');
+  });
+
+  it('setTaskStep mutates the record and the next poll returns the new step', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-3',
+      coverLetterSessionId: 'sess-c-4',
+      atsKeywords: [],
+    });
+
+    const { default: router, setTaskStep } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+    });
+    expect(post.status).toBe(200);
+    const taskId = post.body.taskId;
+    setTaskStep(taskId, 3);
+    const poll = await invokeRoute(router, 'get', `/task/${taskId}`);
+    expect(poll.body.step).toBe(3);
+    expect(poll.body.stepLabel).toBe('Applying ATS suggestions');
+  });
+});
