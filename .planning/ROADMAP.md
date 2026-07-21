@@ -98,6 +98,17 @@ Plans:
 - [x] 02-01-PLAN.md — Version-diff-selector panel + Phase 1 UI tweaks
 - [x] 02-02-PLAN.md — Auto-chain: generate → applySuggestions → ATS
 
+### Phase 3: Form prefill, permalink URLs, and enhanced job folder links
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 3 to break down)
+
 ---
 *Roadmap created: 2026-07-18*
 *Last updated: 2026-07-18 after brownfield add-on milestone initialization*

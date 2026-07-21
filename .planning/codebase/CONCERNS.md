@@ -578,6 +578,56 @@ If the user accidentally runs the server from `/` (or any directory where no anc
 **What's not tested:** The `atsService.ts:135` commented-out early-return; the `atsService.ts:161` commented-out `buildEmptyResult` call. The actual current flow is "always re-extract keywords from the JD via AI even if `atsKeywordsFromAI` was supplied" — which is the opposite of what the function name suggests.
 - Files: `services/atsService.ts:129-162`
 - Risk: The function's name suggests "use what you have, fall back to AI," but the implementation always calls the AI. The user pays an extra model call per `Run ATS Analysis` click even when they supplied the keywords.
+
+---
+
+## Future Enhancements (Deferred)
+
+### F-UT-01: Detect mid-generation vs. fresh load from folder state
+
+**Type:** Future Enhancement (User-facing UX)
+**Filed:** 2026-07-21
+**Phase:** Phase 3 (permalink + prefill)
+
+When a user loads a permalink to a job folder, the client stores no taskId in sessionStorage (e.g., different browser, cleared session). The server can't easily distinguish "generation never started" from "generation completed" without scanning for session-info.txt, presence of specific artifacts, or timestamps.
+
+**Option:** Detect via folder state — check for session-info.txt or artifact timestamps to determine if a generation was in-progress vs. completed, and show appropriate UI state (result block vs. "generation not started" vs. "generation complete but no taskId").
+
+Not blocking — users can refresh manually. Deferred until user confirms need.
+
+### F-UT-02: Generation status dashboard across all folders
+
+**Type:** Future Enhancement (Multi-tab UX)
+**Filed:** 2026-07-21
+
+A UI dashboard showing all in-progress generations across all open tabs. Currently each tab independently polls for its own generation status. A shared dashboard would show:
+- All active taskIds and their current step (resume gen, ATS, apply suggestions, final ATS)
+- Progress indicator per step
+- Artifact availability per step
+
+Would require:
+- Shared state store (localStorage or a shared Worker)
+- Or a new WebSocket/SSE push channel from server (see F-UT-03)
+
+Deferred. Not needed for single-tab workflow.
+
+### F-UT-03: Real-time push via WebSocket/SSE for generation status
+
+**Type:** Future Enhancement (Infrastructure)
+**Filed:** 2026-07-21
+
+Replace polling with push updates. Currently the client polls GET /generate/task/:id every 5-8 seconds. A WebSocket or SSE channel from the server would push status changes immediately.
+
+Use cases:
+- Multi-tab dashboard (F-UT-02)
+- Real-time "generation complete" notifications even when tab is backgrounded
+
+Infrastructure implications:
+- New server endpoint (WS or SSE)
+- Server must track which clients are subscribed to which taskIds
+- Consider Grafana/DataDog integration for observability
+
+Deferred. Polling is sufficient for current single-tab use case.
 - Priority: **Low** (the behaviour is what the file does; the bug is the comment-vs-code drift).
 
 ### Snapshot / Golden Tests for LaTeX Output
