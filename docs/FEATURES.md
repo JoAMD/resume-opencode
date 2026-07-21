@@ -22,6 +22,17 @@ understand the current surface without reading the source or the git log.
   instructed to restrict all file reads and writes (including any scratch file
   used for the `count-characters` tool) to that folder. `/tmp` and other paths
   are explicitly forbidden in the system prompt.
+- **Permalink URL**: After any successful generation the URL hash updates to
+  `#job=<slug>` and a `permalink.txt` file is written to the job folder. The
+  user can copy the URL and re-open the folder from any browser tab.
+- **Form prefill**: Loading a permalink or typing a folder path prefills the
+  form from `job-description.txt`, `other-input.txt`, and `full-jd.txt`. A
+  confirm dialog appears if the form is already non-empty.
+- **Result block**: After generation (or permalink load) the result block lists
+  `resume.pdf`, `cover-letter.pdf`, `cover-letter.txt`, and `ats-analysis.md`
+  as clickable links with copy buttons. **Open all PDFs** opens both PDFs in
+  new tabs. **Compare with latest backup** reuses the diff modal to show what
+  changed since the last saved version.
 
 ## Cover letter generation
 

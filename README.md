@@ -132,6 +132,34 @@ a generation completes, a new panel below the existing buttons in the UI
 - Click **Apply suggestions** to POST `/generate/applySuggestions` and
   poll the task until complete.
 
+### Permalink URLs and form prefill
+
+Each successful resume generation produces a stable shareable URL of the form
+`http://host:port/#job=<slug>`. The server writes a `permalink.txt` file into
+the job folder so any later API consumer can read the canonical URL back
+from disk. Loading the URL in a browser tab prefills the form fields
+(`#jobDescription`, `#extraNotes`, `#companyName`, `#roleName`, `#link-input`,
+`#seek-input`) from the job folder's `job-description.txt`, `other-input.txt`,
+and `full-jd.txt`. The same flow fires when a user types or pastes a folder
+path into `#folderPath` and blurs the field.
+
+- The endpoint backing the prefill is `POST /generate/prefill` with body
+  `{ folderPath: string }`. It returns
+  `{ jobDescription, extraNotes, companyName, roleName, link, fullJD, slug, folderPath }`.
+- A file path (e.g. `…/jobs/foo/structured-output.json`) is resolved to its
+  parent directory before prefill.
+- If the form already has non-empty values when prefill is triggered, a
+  `confirm()` dialog lets the user choose between keeping existing values
+  or replacing them with the loaded ones.
+- Path traversal is rejected with `400 folderPath escapes jobs root`.
+
+The result block (visible after generation **or** on permalink load) shows
+the four key artifacts as clickable links with copy buttons:
+`/jobs/<slug>/resume.pdf`, `/jobs/<slug>/cover-letter.pdf`,
+`/jobs/<slug>/cover-letter.txt`, and `/jobs/<slug>/ats-analysis.md`. A
+**Open all PDFs** button opens both PDFs in new tabs. A **Compare with
+latest backup** button reuses the existing diff modal.
+
 The server (`services/fixSuggestionsService.ts` + `services/backupService.ts`):
 
 1. Creates a `jobs/<slug>/backups/v1/` backup of the current resume files
