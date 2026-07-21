@@ -546,7 +546,7 @@ router.post('/markApplied', async (req, res) => {
       return;
     }
 
-    const otherInput = loadOtherInputFromDir(targetDir);
+    const otherInput = loadOtherInputFromDir(newDir);
     log(`markApplied otherInput from job dir: ${JSON.stringify(otherInput)}`);
     const csvResult = appendApplication({
       company: company || otherInput?.companyName || '',
