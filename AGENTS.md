@@ -162,3 +162,60 @@ parent commit that includes both `resume-opencode/prompts/...` and
 - Forgetting to test after the prompt change lands in the parent —
   prompt wording is part of the system contract; small phrasing
   changes can flip the model into a different behaviour path.
+
+---
+
+# Worktree Setup (sync `prompts/` and `templates/`)
+
+When you create a new git worktree, the `prompts/` and `templates/`
+paths are **not** carried across — they are gitignored. Without them,
+the app cannot read its system prompts and the LaTeX template resolver
+fails. Set them up **before** running the app or the test suite.
+
+Run these commands from the root of the new worktree:
+
+```sh
+# 1. Copy prompts/ from the main checkout.
+#    Prompts are content (not configuration), so a copy is preferred
+#    over a symlink: edits in the worktree stay isolated, and a
+#    re-sync is a single `cp -r` away.
+cp -r /home/adf_home_joel/src/copilot/resume-opencode/prompts ./prompts
+
+# 2. Symlink templates/ to the sibling `resume-tool` repo.
+#    Use an ABSOLUTE path. Relative symlinks (e.g. `../resume-tool/templates`)
+#    do not resolve correctly from worktrees under
+#    `~/.local/share/opencode/worktree/...` — the `..` would point
+#    nowhere useful. The main checkout already has a relative symlink
+#    and that works there; fresh worktrees must use the absolute form.
+ln -sfn /home/adf_home_joel/src/copilot/resume-tool/templates ./templates
+```
+
+**Verification** (run after the setup, before starting the dev server):
+
+```sh
+test -f prompts/resume-system-prompt.txt \
+  || { echo "ERROR: prompts/ not synced" >&2; exit 1; }
+test -L templates && test -d templates \
+  || { echo "ERROR: templates/ symlink missing or broken" >&2; exit 1; }
+```
+
+**When to re-run setup:**
+
+- After creating a new worktree (always).
+- After pulling changes in the parent monorepo that touched prompt
+  wording or template content — re-run `cp -r ... ./prompts` to pick
+  up the new copy. The templates symlink auto-reflects parent edits.
+- Never `git add -f prompts/...` or `git add -f templates/...` — the
+  gitignore is intentional. See [`docs/IGNORED_FILES.md`](docs/IGNORED_FILES.md)
+  for the full rationale.
+
+**Why copy `prompts/` but symlink `templates/`?**
+
+- `prompts/` is content the worktree actively edits and re-tests.
+  A copy keeps the worktree self-contained; a symlink would let an
+  unrelated edit in the main checkout bleed into this worktree's
+  test runs.
+- `templates/` is read-only at runtime (LaTeX source). A symlink
+  means a single source of truth that all worktrees see in real time,
+  with zero risk of accidental edits because the resolved target
+  lives in `resume-tool/`, not here.
