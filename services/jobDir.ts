@@ -85,6 +85,34 @@ export function loadJobDescriptionFromDir(dirPath: string): string | null {
   return null;
 }
 
+export function loadFullJdFromDir(dirPath: string): string | null {
+  const jdPath = path.join(dirPath, 'full-jd.txt');
+  if (fs.existsSync(jdPath)) {
+    return fs.readFileSync(jdPath, 'utf8');
+  }
+  return null;
+}
+
+export function resolveJobFolder(input: string): string | null {
+  const jobsDir = getJobsDir();
+  let candidate = input;
+  if (!path.isAbsolute(candidate)) {
+    candidate = path.join(jobsDir, candidate);
+  }
+  if (!fs.existsSync(candidate)) return null;
+  let stat = fs.statSync(candidate);
+  if (stat.isFile()) {
+    candidate = path.dirname(candidate);
+    if (!fs.existsSync(candidate)) return null;
+    stat = fs.statSync(candidate);
+  }
+  if (!stat.isDirectory()) return null;
+  const realJobsDir = fs.realpathSync(jobsDir);
+  const realCandidate = fs.realpathSync(candidate);
+  if (realCandidate === realJobsDir) return null;
+  return realCandidate;
+}
+
 export interface OtherInputData {
   companyName: string;
   roleName: string;

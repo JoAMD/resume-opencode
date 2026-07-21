@@ -20,7 +20,7 @@ import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fix
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
 import { latestBackupVersion, listBackupVersions, listJobDirs } from '../services/backupService';
-import { loadOtherInputFromDir } from '../services/jobDir';
+import { loadOtherInputFromDir, loadFullJdFromDir, loadJobDescriptionFromDir, resolveJobFolder } from '../services/jobDir';
 
 const router = Router();
 
@@ -49,6 +49,7 @@ type GenerateRequestBody = {
   resumeType?: 'software' | 'qa';
   useCombinedGeneration?: boolean;
   force?: boolean;
+  permalinkUrl?: string;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -123,6 +124,21 @@ export function writeSessionInfo(dirPath: string, info: { sessionId: string; mod
     lines.push(`Cover Letter Session ID: ${info.coverLetterSessionId}`);
   }
   saveJobFile(dirPath, 'session-info.txt', lines.join('\n') + '\n');
+}
+
+export function validatePermalinkUrl(raw: unknown, slug: string): string | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  if (!raw.includes('#job=')) return null;
+  const baseSlug = path.basename(slug);
+  if (!baseSlug) return null;
+  if (!raw.includes(encodeURIComponent(baseSlug)) && !raw.includes(baseSlug)) return null;
+  return raw;
+}
+
+export function writePermalinkTxt(realJobDir: string, permalinkUrl: string): void {
+  fs.writeFileSync(path.join(realJobDir, 'permalink.txt'), permalinkUrl + '\n', 'utf8');
+  log('Wrote permalink.txt for', realJobDir);
 }
 
 const RESUME_TYPE_LABELS: Record<string, string> = {
@@ -303,6 +319,10 @@ router.post('/', async (req, res) => {
       try {
         const { result, sessionId, coverLetterSessionId } = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
         taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now(), sessionId, coverLetterSessionId });
+        const validatedPermalink = validatePermalinkUrl(body.permalinkUrl, jobDir.slug);
+        if (validatedPermalink) {
+          try { writePermalinkTxt(jobDir.jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
         logError('Background generation error:', err);
@@ -317,7 +337,7 @@ router.post('/', async (req, res) => {
 });
 
 router.post('/coverLetter', async (req, res) => {
-  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath } = req.body as GenerateRequestBody & { folderPath?: string };
+  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath, permalinkUrl } = req.body as GenerateRequestBody & { folderPath?: string };
   if (!companyName || !roleName) {
     res.status(400).json({ error: 'companyName and roleName are required.' });
     return;
@@ -356,12 +376,55 @@ router.post('/coverLetter', async (req, res) => {
 
     const effectiveCoverOutput = resolveCoverOutput(coverOutput);
     const coverUrls = await writeCoverLetterArtifacts(jobDir, coverLetterJSON, latexSource, effectiveCoverOutput);
+    const slug = path.basename(jobDir);
+    const validatedPermalink = validatePermalinkUrl(permalinkUrl, slug);
+    if (validatedPermalink) {
+      try { writePermalinkTxt(jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
+    }
     res.json({ sessionId, ...coverUrls });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Cover letter error:', err);
     res.status(500).json({ error: message });
   }
+});
+
+router.post('/prefill', (req, res) => {
+  const body = (req.body ?? {}) as { folderPath?: string; slug?: string };
+  const input = (body.folderPath || body.slug || '').trim();
+  if (!input) {
+    res.status(400).json({ error: 'folderPath required' });
+    return;
+  }
+  const realDir = resolveJobFolder(input);
+  if (!realDir) {
+    res.status(404).json({ error: 'Job folder not found' });
+    return;
+  }
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realJobsRoot || !pathIsInsideDir(realDir, realJobsRoot)) {
+    res.status(400).json({ error: 'folderPath escapes jobs root' });
+    return;
+  }
+  const slug = path.basename(realDir);
+  const jd = loadJobDescriptionFromDir(realDir) ?? '';
+  const other = loadOtherInputFromDir(realDir);
+  const fullJD = loadFullJdFromDir(realDir) ?? '';
+  let extraNotes = '';
+  const otherInputPath = path.join(realDir, 'other-input.txt');
+  if (fs.existsSync(otherInputPath)) {
+    extraNotes = fs.readFileSync(otherInputPath, 'utf8');
+  }
+  res.json({
+    jobDescription: jd,
+    extraNotes,
+    companyName: other?.companyName ?? '',
+    roleName: other?.roleName ?? '',
+    link: other?.link ?? '',
+    fullJD,
+    slug,
+    folderPath: realDir,
+  });
 });
 
 router.post('/compileLastTex', async (req, res) => {
