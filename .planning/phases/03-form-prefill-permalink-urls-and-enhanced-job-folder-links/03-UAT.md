@@ -46,13 +46,15 @@ result: pass
 
 ### 8. Copy permalink button
 expected: A copy button next to the permalink URL for easy sharing
-result: pass
+result: issue
+reported: "the copy buttons dont work"
+severity: major
 
 ## Summary
 
 total: 8
-passed: 6
-issues: 2
+passed: 5
+issues: 3
 pending: 0
 skipped: 0
 blocked: 0
@@ -81,6 +83,16 @@ blocked: 0
   reason: "User reported: Compare with latest backup gives toast 'Diff modal not yet loaded. Try again in a moment.' And on page load suggestions.js:685 Uncaught ReferenceError: openDiffModal is not defined"
   severity: blocker
   test: 6
+  artifacts: []
+  missing: []
+  debug_session: ""
+
+- gap_id: G-03-3
+  truth: "A copy button next to the permalink URL for easy sharing works"
+  status: failed
+  reason: "User reported: the copy buttons dont work"
+  severity: major
+  test: 8
   artifacts: []
   missing: []
   debug_session: ""
