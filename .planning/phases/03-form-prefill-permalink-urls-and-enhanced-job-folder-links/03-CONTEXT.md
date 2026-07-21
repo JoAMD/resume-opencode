@@ -14,7 +14,7 @@ This phase delivers four capabilities:
 
 3. **Enhanced result block** — After generation (or when loading a permalink to an existing folder), show all artifact links (resume.pdf, cover-letter.pdf, cover-letter.txt, ats-analysis.md), a "compare with latest backup" diff, and a quick-open all PDFs button.
 
-4. **Generation status on permalink load** — When loading a permalink to a folder where generation is still in-progress, poll via taskId and show a step indicator + artifact availability list until complete.
+4. **Generation status on permalink load** — When loading a permalink to a folder where generation is still in-progress, poll via taskId and show a step indicator + inline artifact status with spinners until complete.
 </domain>
 
 <decisions>
@@ -57,7 +57,7 @@ This phase delivers four capabilities:
 
 - **D-22:** When loading a permalink to a folder where generation is in-progress, show status + poll via taskId
 - **D-23:** taskId storage: sessionStorage keyed by jobDir — survives refresh, scoped to tab
-- **D-24:** UI shows both: (a) step indicator with descriptive label ("Step 2/4: Running ATS analysis"), AND (b) artifact availability list showing what exists now vs. pending
+- **D-24:** UI shows step indicator + inline artifact status: each artifact listed with a spinner next to it while pending (not grayed out). Existing artifacts shown as normal links, pending artifacts show spinner next to name.
 - **D-25:** Four generation steps with descriptive labels:
   - Step 1/4: "Generating resume + cover letter"
   - Step 2/4: "Running ATS analysis"
@@ -124,7 +124,7 @@ This phase delivers four capabilities:
 
 - Result block should include a small "open all PDFs" button next to artifact links
 - Error toasts for prefill failures should be non-blocking — dependent actions (mark as applied, compile) still work
-- Artifact availability list during in-progress generation should show each artifact with a pending indicator (spinner or grayed out)
+- Artifact status during in-progress generation: inline list with spinner next to each pending artifact (not grayed out)
 - Permalink hash should be clearly readable — the `#job=<slug>` format is the canonical permalink format
 - Session storage key for taskId: `taskId_${jobDir}` to avoid collisions across job folders
 
