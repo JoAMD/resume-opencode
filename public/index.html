@@ -144,6 +144,16 @@
     <div id="loading-job" class="loading-job hidden">Loading job…</div>
     <div id="ats-toast" class="toast hidden"></div>
 
+    <section id="status-panel" class="status-panel hidden" aria-live="polite">
+      <h3>Generation in progress</h3>
+      <ol class="status-steps">
+        <li class="status-step" data-step="1"><span class="inline-spinner"></span> <span class="status-step-label">Generating resume + cover letter</span></li>
+        <li class="status-step" data-step="2"><span class="inline-spinner"></span> <span class="status-step-label">Running ATS analysis</span></li>
+        <li class="status-step" data-step="3"><span class="inline-spinner"></span> <span class="status-step-label">Applying ATS suggestions</span></li>
+        <li class="status-step" data-step="4"><span class="inline-spinner"></span> <span class="status-step-label">Final ATS analysis</span></li>
+      </ol>
+    </section>
+
     <section id="jd-search-panel" class="jd-search">
       <h2>Search past JDs</h2>
       <p class="subtitle">Look for a few words (or a short sentence) across every job folder's <code>job-description.txt</code> and <code>full-jd.txt</code>.</p>
@@ -410,6 +420,7 @@
             body: JSON.stringify({ jobDir, atsKeywords: [], resumeJSON: null }),
           }).then(res => res.json()).then(atsData => {
             if (atsData.taskId) {
+              recordTaskId(jobDir, atsData.taskId);
               pollAtsCompletion(atsData.taskId);
             }
           }).catch(() => { /* fire-and-forget */ });
@@ -565,6 +576,7 @@
         // Store taskId for this tab's subsequent actions
         console.log('Storing lastTaskId:', data.taskId);
         lastTaskId = data.taskId;
+        recordTaskId(result.jobDir, data.taskId);
         document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
 
         // Fire-and-forget: write permalink.txt
@@ -590,6 +602,7 @@
             }),
           }).then(res => res.json()).then(data => {
             if (data.taskId) {
+              recordTaskId(result.jobDir, data.taskId);
               pollApplySuggestionsThenAts(data.taskId, result.jobDir);
             }
           }).catch(() => { /* fire-and-forget: ignore errors */ });
@@ -801,6 +814,7 @@
         document.getElementById('folderPath').value = data.folderPath;
         renderResultBlock(data.slug, 'prefill');
         sessionStorage.setItem('taskId_' + data.slug, '');
+        startStatusPolling(data.slug);
       } catch (err) {
         showToast('Prefill failed: ' + (err && err.message ? err.message : err));
       } finally {
@@ -891,6 +905,157 @@
     window.addEventListener('hashchange', () => {
       if (suppressHashChange) return;
       runPrefillFromHash();
+    });
+
+    function taskIdKey(slug) { return 'taskId_' + slug; }
+    function taskChainKey(slug) { return 'taskChain_' + slug; }
+
+    function recordTaskId(slug, taskId) {
+      if (!slug || !taskId) return;
+      sessionStorage.setItem(taskIdKey(slug), taskId);
+      let chain = [];
+      try { chain = JSON.parse(sessionStorage.getItem(taskChainKey(slug)) || '[]'); } catch (e) { chain = []; }
+      if (!Array.isArray(chain)) chain = [];
+      chain.push(taskId);
+      while (chain.length > 4) chain.shift();
+      sessionStorage.setItem(taskChainKey(slug), JSON.stringify(chain));
+    }
+
+    function loadTaskChain(slug) {
+      const raw = sessionStorage.getItem(taskChainKey(slug));
+      let chain = [];
+      try { chain = raw ? JSON.parse(raw) : []; } catch (e) { chain = []; }
+      if (!Array.isArray(chain)) chain = [];
+      return chain;
+    }
+
+    function clearTaskChain(slug) {
+      sessionStorage.removeItem(taskIdKey(slug));
+      sessionStorage.removeItem(taskChainKey(slug));
+    }
+
+    function renderStatusPanel(maxStep, allComplete) {
+      const panel = document.getElementById('status-panel');
+      if (!panel) return;
+      const steps = panel.querySelectorAll('.status-step');
+      steps.forEach((el) => {
+        const step = Number(el.getAttribute('data-step'));
+        el.removeAttribute('data-active');
+        el.removeAttribute('data-done');
+        if (step < maxStep) el.setAttribute('data-done', 'true');
+        else if (step === maxStep && !allComplete) el.setAttribute('data-active', 'true');
+        else if (step === maxStep && allComplete) el.setAttribute('data-done', 'true');
+      });
+      if (allComplete && maxStep >= 4) {
+        setTimeout(() => panel.classList.add('hidden'), 1000);
+      } else {
+        panel.classList.remove('hidden');
+      }
+    }
+
+    async function pollChain(slug, taskIds) {
+      let maxStep = 0;
+      let allComplete = true;
+      for (const id of taskIds) {
+        try {
+          const res = await fetch('/generate/task/' + id);
+          if (res.status === 404) {
+            showToast('Server restarted — chain lost');
+            clearTaskChain(slug);
+            renderStatusPanel(0, true);
+            return;
+          }
+          const data = await res.json();
+          const step = typeof data.step === 'number' ? data.step : 1;
+          if (step > maxStep) maxStep = step;
+          if (data.status !== 'complete' && data.status !== 'error') allComplete = false;
+        } catch (e) {
+          allComplete = false;
+        }
+      }
+      renderStatusPanel(maxStep, allComplete);
+    }
+
+    async function startStatusPolling(slug) {
+      const chain = loadTaskChain(slug);
+      if (chain.length === 0) return;
+      const panel = document.getElementById('status-panel');
+      if (panel) panel.classList.remove('hidden');
+      let safety = 60;
+      let allComplete = false;
+      let maxStep = 0;
+      while (safety-- > 0) {
+        chain.forEach((id) => { /* no-op */ });
+        let tasksComplete = true;
+        let localMax = 0;
+        for (const id of chain) {
+          try {
+            const res = await fetch('/generate/task/' + id);
+            if (res.status === 404) {
+              showToast('Server restarted — chain lost');
+              clearTaskChain(slug);
+              renderStatusPanel(0, true);
+              return;
+            }
+            const data = await res.json();
+            const step = typeof data.step === 'number' ? data.step : 1;
+            if (step > localMax) localMax = step;
+            if (data.status !== 'complete' && data.status !== 'error') tasksComplete = false;
+          } catch (e) {
+            tasksComplete = false;
+          }
+        }
+        maxStep = localMax;
+        allComplete = tasksComplete;
+        renderStatusPanel(maxStep, allComplete);
+        if (allComplete && maxStep >= 4) {
+          clearTaskChain(slug);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+
+    // Wire the "open-diff-for-latest" event consumer (dispatches the existing diff modal)
+    window.addEventListener('open-diff-for-latest', async (e) => {
+      const slug = e.detail && e.detail.slug;
+      if (!slug) return;
+      try {
+        const res = await fetch('/generate/listBackups?jobDir=' + encodeURIComponent(slug));
+        const data = await res.json();
+        const versions = (data.versions || []);
+        if (!versions.length) {
+          showToast('No backup versions found for this job folder.');
+          return;
+        }
+        const latest = Math.max(...versions);
+        const openIt = () => {
+          if (typeof globalThis.openDiffModal === 'function') {
+            globalThis.openDiffModal(latest, null, slug);
+            return true;
+          }
+          return false;
+        };
+        if (!openIt()) {
+          let waited = 0;
+          while (waited < 2000 && typeof globalThis.openDiffModal !== 'function') {
+            await new Promise((r) => setTimeout(r, 50));
+            waited += 50;
+          }
+          if (!openIt()) {
+            showToast('Diff modal not yet loaded. Try again in a moment.');
+          }
+        }
+      } catch (err) {
+        showToast('Failed to open diff: ' + (err && err.message ? err.message : err));
+      }
+    });
+
+    // Listen for the "apply-task-started" event from suggestions.js (Plan 02 wiring)
+    window.addEventListener('apply-task-started', (e) => {
+      const { taskId, slug } = (e && e.detail) || {};
+      if (!taskId || !slug) return;
+      recordTaskId(slug, taskId);
     });
 
     // Copy button

@@ -542,6 +542,7 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
         attachedFilePaths: attached,
         modelSelect: getCurrentModel(),
       });
+      window.dispatchEvent(new CustomEvent('apply-task-started', { detail: { taskId, slug } }));
       setStatus(statusNode, 'Model is working on your suggestions…');
       const task = await waitForTask(taskId);
       handleApplySuccess(task);
@@ -680,3 +681,5 @@ if (document.readyState === 'loading') {
 } else {
   bootstrap();
 }
+
+globalThis.openDiffModal = openDiffModal;

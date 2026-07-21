@@ -578,3 +578,14 @@ button[type="submit"]:disabled,
 
 .inline-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #888; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.status-panel { background: #1a1a2e; border-radius: 6px; padding: 16px; margin-top: 16px; }
+.status-panel.hidden { display: none; }
+.status-panel h3 { margin: 0 0 8px 0; font-size: 1em; }
+.status-steps { list-style: none; padding: 0; margin: 0; }
+.status-step { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: #888; }
+.status-step .inline-spinner { display: none; }
+.status-step[data-active="true"] { color: #fff; }
+.status-step[data-active="true"] .inline-spinner { display: inline-block; }
+.status-step[data-done="true"] { color: #86efac; }
+.status-step[data-done="true"]::before { content: '✓'; color: #86efac; margin-right: 4px; }
