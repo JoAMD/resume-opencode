@@ -630,6 +630,19 @@ Infrastructure implications:
 Deferred. Polling is sufficient for current single-tab use case.
 - Priority: **Low** (the behaviour is what the file does; the bug is the comment-vs-code drift).
 
+### F-UT-04: Prefill missing the Resume Type dropdown
+
+**Type:** Future Enhancement (User-facing UX)
+**Filed:** 2026-07-21
+**Phase:** Phase 3 (permalink + prefill)
+
+The prefill logic (from both permalink load and folder-path blur) populates text fields (job description, extra notes, etc.) from job folder files, but does not restore the Resume Type dropdown (`#resumeType` — Software Engineer vs QA Engineer). The dropdown reverts to the sessionStorage/default value on load.
+
+For permalink load: should also restore `resumeType` from a persisted value (e.g., sessionStorage or a marker file in the job folder).
+For folder-path blur: prefill does not know which resume type was used originally, so the dropdown stays at whatever is currently selected.
+
+**Risk:** Low. Users can still select the correct type before generation, but forgetting to switch is a real footgun. Deferred until user requests it as a bug.
+
 ### Snapshot / Golden Tests for LaTeX Output
 
 **What's not tested:** The exact LaTeX output for a given structured JSON. A model that returns `bullets: ["line 1\nline 2"]` (with a literal newline) would produce a LaTeX compile error. There is no test that pins the output format.
