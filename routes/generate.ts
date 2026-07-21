@@ -427,6 +427,37 @@ router.post('/prefill', (req, res) => {
   });
 });
 
+router.post('/permalink', (req, res) => {
+  const body = (req.body ?? {}) as { slug?: string; permalinkUrl?: string };
+  const slug = (body.slug || '').trim();
+  if (!slug) {
+    res.status(400).json({ error: 'slug is required' });
+    return;
+  }
+  const realDir = safeRealpath(resolveJobDir(slug));
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realDir || !realJobsRoot || !pathIsInsideDir(realDir, realJobsRoot)) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+  if (!fs.existsSync(realDir) || !fs.statSync(realDir).isDirectory()) {
+    res.status(404).json({ error: 'Job folder not found' });
+    return;
+  }
+  const validated = validatePermalinkUrl(body.permalinkUrl, slug);
+  if (!validated) {
+    res.status(400).json({ error: 'invalid permalinkUrl' });
+    return;
+  }
+  try {
+    writePermalinkTxt(realDir, validated);
+    res.json({ ok: true });
+  } catch (e) {
+    logError('Failed to write permalink.txt:', e);
+    res.status(500).json({ error: 'failed to write permalink.txt' });
+  }
+});
+
 router.post('/compileLastTex', async (req, res) => {
   try {
     const texPath = lastGeneratedTexPath ?? findLatestTexFile();

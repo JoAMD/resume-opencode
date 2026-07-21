@@ -141,6 +141,7 @@
     </form>
 
     <div id="status" class="status hidden"></div>
+    <div id="loading-job" class="loading-job hidden">Loading job…</div>
     <div id="ats-toast" class="toast hidden"></div>
 
     <section id="jd-search-panel" class="jd-search">
@@ -193,13 +194,19 @@
     </section>
 
     <div id="result" class="result hidden">
-      <p>✅ Resume generated!</p>
+      <p id="result-heading">✅ Resume generated!</p>
       <a id="pdf-link" href="#" target="_blank">Open PDF</a>
       <span id="job-folder" class="folder-path"></span>
       <span id="session-id" class="session-id hidden">
         OpenCode session: <code id="session-id-value"></code>
         <button type="button" id="session-id-copy" class="button-tiny">Copy</button>
       </span>
+      <p id="result-permalink" class="result-permalink hidden">Permalink: <a id="permalink-link" href="#" target="_blank"></a> <button type="button" id="copy-permalink-btn" class="button-tiny">Copy</button></p>
+      <div id="result-artifacts" class="result-artifacts hidden"></div>
+      <div class="result-actions hidden" id="result-actions">
+        <button type="button" id="open-all-pdfs-btn" class="button button-secondary button-small">Open all PDFs</button>
+        <button type="button" id="compare-latest-backup-btn" class="button button-secondary button-small">Compare with latest backup</button>
+      </div>
     </div>
   </div>
 
@@ -551,12 +558,21 @@
         }
         result.className = 'result';
         status.className = 'status hidden';
+        setPermalinkHash(result.jobDir);
+        renderResultBlock(result.jobDir, 'generate');
         playSuccessSound();
 
         // Store taskId for this tab's subsequent actions
         console.log('Storing lastTaskId:', data.taskId);
         lastTaskId = data.taskId;
         document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
+
+        // Fire-and-forget: write permalink.txt
+        fetch('/generate/permalink', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: result.jobDir, permalinkUrl: buildPermalink(result.jobDir) }),
+        }).catch(() => { /* fire-and-forget */ });
 
         // Auto-apply suggestions + ATS chain (fire-and-forget)
         const autoApplyChecked = document.getElementById('autoApplySuggestions')?.checked;
@@ -625,6 +641,16 @@
           window.open(data.txtUrl, '_blank');
         } else {
           alert('Cover letter generated (no PDF).');
+        }
+        // If the cover letter is for the most recent jobDir, write permalink.txt
+        if (lastJobDir) {
+          fetch('/generate/permalink', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug: lastJobDir, permalinkUrl: buildPermalink(lastJobDir) }),
+          }).catch(() => { /* fire-and-forget */ });
+          setPermalinkHash(lastJobDir);
+          renderResultBlock(lastJobDir, 'generate');
         }
       } catch (err) {
         playFailureSound();
@@ -707,11 +733,165 @@
         globalThis.__resumeOpencode = globalThis.__resumeOpencode || {};
         globalThis.__resumeOpencode.jobsPath = data.jobsPath;
         folderPathInput.value = globalThis.__JOBS_PATH__ + '/';
+        runPrefillFromHash();
       } catch (e) {
         console.error('Failed to load config:', e);
       }
     }
     initConfig();
+
+    function buildPermalink(slug) {
+      return window.location.origin + window.location.pathname + '#job=' + encodeURIComponent(slug);
+    }
+
+    let suppressHashChange = false;
+    function setPermalinkHash(slug) {
+      suppressHashChange = true;
+      window.location.hash = '#job=' + encodeURIComponent(slug);
+      Promise.resolve().then(() => { suppressHashChange = false; });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('ats-toast');
+      if (!toast) return;
+      toast.textContent = msg;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 6000);
+    }
+
+    async function runPrefill(folderPath, source) {
+      const loadingEl = document.getElementById('loading-job');
+      const basePath = (globalThis.__JOBS_PATH__ || '') + '/';
+      if (!folderPath || folderPath === globalThis.__JOBS_PATH__ || folderPath === basePath) return;
+      if (loadingEl) { loadingEl.classList.remove('hidden'); loadingEl.textContent = 'Loading job…'; }
+      try {
+        const fields = ['seek-input', 'jobDescription', 'extraNotes', 'companyName', 'roleName', 'link-input'];
+        const anyNonEmpty = fields.some((id) => {
+          const el = document.getElementById(id);
+          return el && el.value && el.value.trim() !== '';
+        });
+        let useLoaded = true;
+        if (anyNonEmpty) {
+          useLoaded = window.confirm('Keep existing or use loaded?\n\nOK = use loaded\nCancel = keep existing');
+        }
+        const res = await fetch('/generate/prefill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath }),
+        });
+        if (!res.ok) {
+          let err = 'Prefill failed';
+          try { const j = await res.json(); err = j.error || err; } catch (e) {}
+          showToast('Prefill failed: ' + err);
+          return;
+        }
+        const data = await res.json();
+        const heading = document.getElementById('result-heading');
+        if (heading) heading.classList.add('hidden');
+        if (useLoaded) {
+          if (data.jobDescription !== undefined) document.getElementById('jobDescription').value = data.jobDescription || '';
+          if (data.extraNotes !== undefined) document.getElementById('extraNotes').value = data.extraNotes || '';
+          if (data.companyName !== undefined) document.getElementById('companyName').value = data.companyName || '';
+          if (data.roleName !== undefined) document.getElementById('roleName').value = data.roleName || '';
+          if (data.link !== undefined) document.getElementById('link-input').value = data.link || '';
+          if (data.fullJD !== undefined) document.getElementById('seek-input').value = data.fullJD || '';
+        }
+        lastJobDir = data.slug;
+        globalThis.__resumeOpencode.lastJobDir = data.slug;
+        document.getElementById('folderPath').value = data.folderPath;
+        renderResultBlock(data.slug, 'prefill');
+        sessionStorage.setItem('taskId_' + data.slug, '');
+      } catch (err) {
+        showToast('Prefill failed: ' + (err && err.message ? err.message : err));
+      } finally {
+        if (loadingEl) loadingEl.classList.add('hidden');
+      }
+    }
+
+    function renderResultBlock(slug, source) {
+      const result = document.getElementById('result');
+      const heading = document.getElementById('result-heading');
+      if (heading) {
+        if (source === 'prefill') heading.classList.add('hidden');
+        else heading.classList.remove('hidden');
+      }
+      const pdfLink = document.getElementById('pdf-link');
+      pdfLink.href = `/jobs/${slug}/resume.pdf`;
+      const artifactsEl = document.getElementById('result-artifacts');
+      const items = [
+        { name: 'resume.pdf', label: 'Resume PDF' },
+        { name: 'cover-letter.pdf', label: 'Cover Letter PDF' },
+        { name: 'cover-letter.txt', label: 'Cover Letter TXT' },
+        { name: 'ats-analysis.md', label: 'ATS Analysis' },
+      ];
+      artifactsEl.innerHTML = '';
+      items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'artifact-row';
+        row.setAttribute('data-artifact', item.name);
+        const a = document.createElement('a');
+        a.className = 'artifact-link';
+        a.href = `/jobs/${slug}/${item.name}`;
+        a.target = '_blank';
+        a.textContent = item.label;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'artifact-copy button-tiny';
+        btn.textContent = 'Copy';
+        btn.addEventListener('click', async () => {
+          const absolute = window.location.origin + a.getAttribute('href');
+          try {
+            await navigator.clipboard.writeText(absolute);
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+          } catch (e) { console.error('clipboard write failed', e); }
+        });
+        row.appendChild(a);
+        row.appendChild(btn);
+        artifactsEl.appendChild(row);
+      });
+      artifactsEl.classList.remove('hidden');
+
+      const permalink = document.getElementById('result-permalink');
+      const permalinkLink = document.getElementById('permalink-link');
+      const url = buildPermalink(slug);
+      permalinkLink.href = url;
+      permalinkLink.textContent = url;
+      permalink.classList.remove('hidden');
+      const copyPerm = document.getElementById('copy-permalink-btn');
+      copyPerm.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          copyPerm.textContent = 'Copied!';
+          setTimeout(() => { copyPerm.textContent = 'Copy'; }, 1200);
+        } catch (e) { console.error('clipboard write failed', e); }
+      };
+
+      document.getElementById('result-actions').classList.remove('hidden');
+      document.getElementById('open-all-pdfs-btn').onclick = () => {
+        window.open(`/jobs/${slug}/resume.pdf`, '_blank');
+        window.open(`/jobs/${slug}/cover-letter.pdf`, '_blank');
+      };
+      document.getElementById('compare-latest-backup-btn').onclick = () => {
+        window.dispatchEvent(new CustomEvent('open-diff-for-latest', { detail: { slug } }));
+      };
+      result.className = 'result';
+    }
+
+    function runPrefillFromHash() {
+      const hash = window.location.hash || '';
+      const match = hash.match(/^#job=(.+)$/);
+      if (!match) return;
+      const slug = decodeURIComponent(match[1]);
+      const basePath = (globalThis.__JOBS_PATH__ || '') + '/';
+      const folderPath = basePath + slug;
+      runPrefill(folderPath, 'hash');
+    }
+
+    window.addEventListener('hashchange', () => {
+      if (suppressHashChange) return;
+      runPrefillFromHash();
+    });
 
     // Copy button
     document.getElementById('copy-path-btn').addEventListener('click', () => {
@@ -730,6 +910,7 @@
       } else if (currentValue && !currentValue.startsWith(basePath) && currentValue !== globalThis.__JOBS_PATH__) {
         e.target.value = basePath + currentValue;
       }
+      runPrefill(e.target.value, 'blur');
     });
 
     // Store last task ID and last job dir for per-tab tracking
