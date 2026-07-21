@@ -33,6 +33,15 @@ understand the current surface without reading the source or the git log.
   as clickable links with copy buttons. **Open all PDFs** opens both PDFs in
   new tabs. **Compare with latest backup** reuses the diff modal to show what
   changed since the last saved version.
+- **Generation status**: While the auto-chain (generate → apply suggestions →
+  ATS analysis) runs, each `taskId` is recorded in
+  `sessionStorage['taskId_<slug>']` (and the chain in
+  `sessionStorage['taskChain_<slug>']`, capped at 4 entries). Loading the
+  permalink for a folder with an active chain shows a 4-step status indicator
+  with descriptive labels and inline spinners next to pending artifacts. When
+  the chain completes, the status panel closes and the result block is
+  shown. If the server restarts mid-chain, the panel detects the 404, clears
+  the chain, and shows a "Server restarted — chain lost" toast.
 
 ## Cover letter generation
 

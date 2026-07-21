@@ -160,6 +160,25 @@ the four key artifacts as clickable links with copy buttons:
 **Open all PDFs** button opens both PDFs in new tabs. A **Compare with
 latest backup** button reuses the existing diff modal.
 
+### Generation status on permalink load
+
+When a permalink is loaded for a folder where generation is still in flight
+(or the auto-chain is firing), a 4-step status indicator surfaces the
+current step. Each background `taskId` is recorded in
+`sessionStorage['taskId_<slug>']` (the most recent) and a chain of up to
+four `taskId`s in `sessionStorage['taskChain_<slug>']`, so a refresh
+reattaches to the same chain without losing progress.
+
+The status panel polls each recorded `taskId` via the existing
+`GET /generate/task/:taskId` endpoint — no new endpoint was introduced.
+The step number and a human-readable label are returned by the polling
+endpoint (`step: 1..4`, `stepLabel: 'Generating resume + cover letter' |
+'Running ATS analysis' | 'Applying ATS suggestions' | 'Final ATS
+analysis'`). When the chain reaches step 4 and all tasks are complete,
+the status panel closes and the result block takes over. If the server
+restarts mid-chain (the in-memory `taskMap` is lost), the panel detects
+the 404, clears the chain, and toasts `Server restarted — chain lost`.
+
 The server (`services/fixSuggestionsService.ts` + `services/backupService.ts`):
 
 1. Creates a `jobs/<slug>/backups/v1/` backup of the current resume files
