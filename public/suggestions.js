@@ -339,6 +339,7 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       diffPre.textContent = `Network error: ${err && err.message ? err.message : err}`;
     }
   }
+  globalThis.openDiffModal = openDiffModal;
 
   function closeDiffModal() {
     diffModalRoot.classList.add('hidden');
@@ -361,6 +362,16 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   diffCloseBtn.addEventListener('click', closeDiffModal);
   diffModalRoot.addEventListener('click', (e) => {
     if (e.target === diffModalRoot) closeDiffModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!diffModalRoot.classList.contains('hidden')) {
+      e.preventDefault();
+      closeDiffModal();
+    } else if (!popoverRoot.classList.contains('hidden')) {
+      e.preventDefault();
+      closeFilePopover();
+    }
   });
   if (diffViewHunksBtn) {
     diffViewHunksBtn.addEventListener('click', () => {
@@ -542,6 +553,7 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
         attachedFilePaths: attached,
         modelSelect: getCurrentModel(),
       });
+      window.dispatchEvent(new CustomEvent('apply-task-started', { detail: { taskId, slug } }));
       setStatus(statusNode, 'Model is working on your suggestions…');
       const task = await waitForTask(taskId);
       handleApplySuccess(task);
@@ -589,8 +601,17 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   const vdsFolderList = el('vds-folder-list');
 
   if (vdsFolderInput && vdsSourceVersion && vdsTargetVersion && vdsDiffBtn) {
-    const lastJobDir = globalThis.__resumeOpencode && globalThis.__resumeOpencode.lastJobDir;
-    if (lastJobDir) vdsFolderInput.value = lastJobDir;
+    function prefillVdsPanel(slug) {
+      if (!slug) return;
+      vdsFolderInput.value = slug;
+      loadVersionDropdowns(slug);
+    }
+    const initialSlug = globalThis.__resumeOpencode && globalThis.__resumeOpencode.lastJobDir;
+    if (initialSlug) prefillVdsPanel(initialSlug);
+    window.addEventListener('prefill-complete', (e) => {
+      const slug = e && e.detail && e.detail.slug;
+      prefillVdsPanel(slug);
+    });
 
     async function loadVersionDropdowns(folder) {
       if (!folder) return;

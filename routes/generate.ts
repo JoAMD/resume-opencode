@@ -20,7 +20,7 @@ import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fix
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
 import { latestBackupVersion, listBackupVersions, listJobDirs } from '../services/backupService';
-import { loadOtherInputFromDir } from '../services/jobDir';
+import { loadOtherInputFromDir, loadFullJdFromDir, loadJobDescriptionFromDir, resolveJobFolder } from '../services/jobDir';
 
 const router = Router();
 
@@ -49,6 +49,7 @@ type GenerateRequestBody = {
   resumeType?: 'software' | 'qa';
   useCombinedGeneration?: boolean;
   force?: boolean;
+  permalinkUrl?: string;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -62,9 +63,25 @@ type TaskResult = {
   error?: string;
   sessionId?: string;
   coverLetterSessionId?: string;
+  step?: number;
+  stepLabel?: string;
 };
 
-const taskMap = new Map<string, TaskResult & { startedAt: number }>();
+const STEP_LABELS: Record<number, string> = {
+  1: 'Generating resume + cover letter',
+  2: 'Running ATS analysis',
+  3: 'Applying ATS suggestions',
+  4: 'Final ATS analysis',
+};
+
+export function setTaskStep(taskId: string, step: number): void {
+  const record = taskMap.get(taskId);
+  if (!record) return;
+  record.step = step;
+  record.stepLabel = STEP_LABELS[step] ?? '';
+}
+
+const taskMap = new Map<string, TaskResult & { startedAt: number; step: number; stepLabel: string }>();
 
 function createTaskId(): string {
   return `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -123,6 +140,21 @@ export function writeSessionInfo(dirPath: string, info: { sessionId: string; mod
     lines.push(`Cover Letter Session ID: ${info.coverLetterSessionId}`);
   }
   saveJobFile(dirPath, 'session-info.txt', lines.join('\n') + '\n');
+}
+
+export function validatePermalinkUrl(raw: unknown, slug: string): string | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  if (!raw.includes('#job=')) return null;
+  const baseSlug = path.basename(slug);
+  if (!baseSlug) return null;
+  if (!raw.includes(encodeURIComponent(baseSlug)) && !raw.includes(baseSlug)) return null;
+  return raw;
+}
+
+export function writePermalinkTxt(realJobDir: string, permalinkUrl: string): void {
+  fs.writeFileSync(path.join(realJobDir, 'permalink.txt'), permalinkUrl + '\n', 'utf8');
+  log('Wrote permalink.txt for', realJobDir);
 }
 
 const RESUME_TYPE_LABELS: Record<string, string> = {
@@ -238,6 +270,8 @@ router.get('/task/:taskId', (req, res) => {
     startedAt: task.startedAt,
     sessionId: task.sessionId,
     coverLetterSessionId: task.coverLetterSessionId,
+    step: task.step,
+    stepLabel: task.stepLabel,
   });
 });
 
@@ -296,17 +330,21 @@ router.post('/', async (req, res) => {
       writeLinkToJobDir(jobDir.jobDir, body.link.trim());
     }
     const taskId = createTaskId();
-    taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
+    taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
     res.json({ taskId, jobDir: jobDir.slug });
 
     (async () => {
       try {
         const { result, sessionId, coverLetterSessionId } = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
-        taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now(), sessionId, coverLetterSessionId });
+        taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now(), sessionId, coverLetterSessionId, step: 1, stepLabel: STEP_LABELS[1] });
+        const validatedPermalink = validatePermalinkUrl(body.permalinkUrl, jobDir.slug);
+        if (validatedPermalink) {
+          try { writePermalinkTxt(jobDir.jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
         logError('Background generation error:', err);
-        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now() });
+        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
       }
     })();
   } catch (err: unknown) {
@@ -317,7 +355,7 @@ router.post('/', async (req, res) => {
 });
 
 router.post('/coverLetter', async (req, res) => {
-  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath } = req.body as GenerateRequestBody & { folderPath?: string };
+  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath, permalinkUrl } = req.body as GenerateRequestBody & { folderPath?: string };
   if (!companyName || !roleName) {
     res.status(400).json({ error: 'companyName and roleName are required.' });
     return;
@@ -356,11 +394,85 @@ router.post('/coverLetter', async (req, res) => {
 
     const effectiveCoverOutput = resolveCoverOutput(coverOutput);
     const coverUrls = await writeCoverLetterArtifacts(jobDir, coverLetterJSON, latexSource, effectiveCoverOutput);
+    const slug = path.basename(jobDir);
+    const validatedPermalink = validatePermalinkUrl(permalinkUrl, slug);
+    if (validatedPermalink) {
+      try { writePermalinkTxt(jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
+    }
     res.json({ sessionId, ...coverUrls });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Cover letter error:', err);
     res.status(500).json({ error: message });
+  }
+});
+
+router.post('/prefill', (req, res) => {
+  const body = (req.body ?? {}) as { folderPath?: string; slug?: string };
+  const input = (body.folderPath || body.slug || '').trim();
+  if (!input) {
+    res.status(400).json({ error: 'folderPath required' });
+    return;
+  }
+  const realDir = resolveJobFolder(input);
+  if (!realDir) {
+    res.status(404).json({ error: 'Job folder not found' });
+    return;
+  }
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realJobsRoot || !pathIsInsideDir(realDir, realJobsRoot)) {
+    res.status(400).json({ error: 'folderPath escapes jobs root' });
+    return;
+  }
+  const slug = path.basename(realDir);
+  const jd = loadJobDescriptionFromDir(realDir) ?? '';
+  const other = loadOtherInputFromDir(realDir);
+  const fullJD = loadFullJdFromDir(realDir) ?? '';
+  let extraNotes = '';
+  const otherInputPath = path.join(realDir, 'other-input.txt');
+  if (fs.existsSync(otherInputPath)) {
+    extraNotes = fs.readFileSync(otherInputPath, 'utf8');
+  }
+  res.json({
+    jobDescription: jd,
+    extraNotes,
+    companyName: other?.companyName ?? '',
+    roleName: other?.roleName ?? '',
+    link: other?.link ?? '',
+    fullJD,
+    slug,
+    folderPath: realDir,
+  });
+});
+
+router.post('/permalink', (req, res) => {
+  const body = (req.body ?? {}) as { slug?: string; permalinkUrl?: string };
+  const slug = (body.slug || '').trim();
+  if (!slug) {
+    res.status(400).json({ error: 'slug is required' });
+    return;
+  }
+  const realDir = safeRealpath(resolveJobDir(slug));
+  const realJobsRoot = ensureJobsRootRealpath();
+  if (!realDir || !realJobsRoot || !pathIsInsideDir(realDir, realJobsRoot)) {
+    res.status(403).json({ error: 'Access denied' });
+    return;
+  }
+  if (!fs.existsSync(realDir) || !fs.statSync(realDir).isDirectory()) {
+    res.status(404).json({ error: 'Job folder not found' });
+    return;
+  }
+  const validated = validatePermalinkUrl(body.permalinkUrl, slug);
+  if (!validated) {
+    res.status(400).json({ error: 'invalid permalinkUrl' });
+    return;
+  }
+  try {
+    writePermalinkTxt(realDir, validated);
+    res.json({ ok: true });
+  } catch (e) {
+    logError('Failed to write permalink.txt:', e);
+    res.status(500).json({ error: 'failed to write permalink.txt' });
   }
 });
 
@@ -981,6 +1093,8 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
         startedAt: Date.now(),
         sessionId: result.sessionId,
         result: buildApplySuggestionsResult(result),
+        step: 3,
+        stepLabel: STEP_LABELS[3],
       });
     } catch (err) {
       if (err instanceof NoOpResultError) {
@@ -990,12 +1104,14 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
           error: 'no-op',
           startedAt: Date.now(),
           result: { backupPath: err.backup.backupDir, backupVersion: err.backup.version },
+          step: 3,
+          stepLabel: STEP_LABELS[3],
         });
         return;
       }
       const message = err instanceof Error ? err.message : 'Internal server error';
       logError('applySuggestions background error:', err);
-      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now() });
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 3, stepLabel: STEP_LABELS[3] });
     }
   })();
 }
@@ -1019,7 +1135,7 @@ router.post('/applySuggestions', (req, res) => {
     return;
   }
   const taskId = createTaskId();
-  taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
+  taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 3, stepLabel: STEP_LABELS[3] });
   res.json({ taskId, jobDir: body.jobDir });
   runApplySuggestionsBackground(taskId, {
     jobDir: validated.value.jobDir,
@@ -1087,11 +1203,13 @@ function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
         status: 'complete',
         startedAt: Date.now(),
         result: { coveragePercent },
+        step: 4,
+        stepLabel: STEP_LABELS[4],
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Internal server error';
       logError('ats background error:', err);
-      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now() });
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
     }
   })();
 }
@@ -1107,7 +1225,7 @@ router.post('/runAtsBackground', (req, res) => {
     return;
   }
   const taskId = createTaskId();
-  taskMap.set(taskId, { status: 'pending', startedAt: Date.now() });
+  taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
   res.json({ taskId });
   runAtsBackground(taskId, { jobDir, atsKeywords: atsKeywords || [], resumeJSON: resumeJSON || null });
 });

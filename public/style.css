@@ -559,3 +559,35 @@ button[type="submit"]:disabled,
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
 .toast.hidden { display: none; }
+
+.loading-job { color: #888; font-style: italic; padding: 8px 0; }
+.loading-job.hidden { display: none; }
+
+.result-permalink { font-size: 0.9em; color: #888; margin-top: 8px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.result-permalink code { background: #1a1a2e; padding: 2px 6px; border-radius: 3px; }
+.result-permalink__url { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95em; color: #4f8ef7; word-break: break-all; flex: 1 1 auto; min-width: 0; }
+.result-permalink__url:hover { text-decoration: underline; }
+.result-permalink.hidden { display: none; }
+
+.result-artifacts { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.result-artifacts.hidden { display: none; }
+.artifact-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: #1a1a2e; border-radius: 4px; }
+.artifact-link { flex: 1; }
+.result-artifacts.missing .artifact-row[data-artifact="resume.pdf"] { opacity: 0.5; }
+
+.result-actions { display: flex; gap: 8px; margin-top: 12px; }
+.result-actions.hidden { display: none; }
+
+.inline-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #888; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status-panel { background: #1a1a2e; border-radius: 6px; padding: 16px; margin-top: 16px; }
+.status-panel.hidden { display: none; }
+.status-panel h3 { margin: 0 0 8px 0; font-size: 1em; }
+.status-steps { list-style: none; padding: 0; margin: 0; }
+.status-step { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: #888; }
+.status-step .inline-spinner { display: none; }
+.status-step[data-active="true"] { color: #fff; }
+.status-step[data-active="true"] .inline-spinner { display: inline-block; }
+.status-step[data-done="true"] { color: #86efac; }
+.status-step[data-done="true"]::before { content: '✓'; color: #86efac; margin-right: 4px; }

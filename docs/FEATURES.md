@@ -22,6 +22,33 @@ understand the current surface without reading the source or the git log.
   instructed to restrict all file reads and writes (including any scratch file
   used for the `count-characters` tool) to that folder. `/tmp` and other paths
   are explicitly forbidden in the system prompt.
+- **Permalink URL**: After any successful generation the URL hash updates to
+  `#job=<slug>` and a `permalink.txt` file is written to the job folder. The
+  user can copy the URL and re-open the folder from any browser tab. The
+  permalink is rendered as a plain monospace URL (no chip background) with
+  underline-on-hover and a small Copy button next to it.
+- **Form prefill**: Loading a permalink or typing a folder path prefills the
+  form from `job-description.txt`, `other-input.txt`, and `full-jd.txt`. A
+  confirm dialog appears if the form is already non-empty.
+- **Result block**: After generation (or permalink load) the result block lists
+  `resume.pdf`, `cover-letter.pdf`, `cover-letter.txt`, and `ats-analysis.md`
+  as clickable links with copy buttons. **Open all PDFs** opens both PDFs in
+  new tabs. **Compare with latest backup** reuses the diff modal to show what
+  changed since the last saved version.
+- **Version diff selector**: A folder input plus two version dropdowns and a
+  diff button live in the suggestions panel. On permalink load the panel is
+  prefilled with the current job's folder name and its source/target version
+  dropdowns default to the second-latest and latest backups (or current and
+  latest when a backup is missing) so the diff modal opens with one click.
+- **Generation status**: While the auto-chain (generate → apply suggestions →
+  ATS analysis) runs, each `taskId` is recorded in
+  `sessionStorage['taskId_<slug>']` (and the chain in
+  `sessionStorage['taskChain_<slug>']`, capped at 4 entries). Loading the
+  permalink for a folder with an active chain shows a 4-step status indicator
+  with descriptive labels and inline spinners next to pending artifacts. When
+  the chain completes, the status panel closes and the result block is
+  shown. If the server restarts mid-chain, the panel detects the 404, clears
+  the chain, and shows a "Server restarted — chain lost" toast.
 
 ## Cover letter generation
 

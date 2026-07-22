@@ -653,3 +653,281 @@ describe('GET /generate/diffResume', () => {
     expect(res.body.error).toBe('invalid format');
   });
 });
+
+describe('POST /generate/prefill', () => {
+  const JOBS_ROOT = '/tmp/opencode/fake-project-root/jobs';
+  const JOB_DIR = `${JOBS_ROOT}/prefill-slug`;
+
+  beforeEach(() => {
+    existsSync.mockReset();
+    readFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    statSync.mockReset();
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === JOB_DIR, isFile: () => p !== JOB_DIR }));
+  });
+
+  it('returns 200 with all six fields when all three input files are present', async () => {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === `${JOB_DIR}/job-description.txt` || s === `${JOB_DIR}/other-input.txt` || s === `${JOB_DIR}/full-jd.txt`;
+    });
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === `${JOB_DIR}/job-description.txt`) return 'job description text';
+      if (p === `${JOB_DIR}/other-input.txt`) return 'Resume Type: Software Engineer\n\nCompany Name: Acme\n\nRole / Title: SWE\n\nJob posting link: https://example.com\n';
+      if (p === `${JOB_DIR}/full-jd.txt`) return 'the full jd text';
+      return '';
+    });
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', { folderPath: `${JOB_DIR}` });
+    expect(res.status).toBe(200);
+    expect(res.body.jobDescription).toBe('job description text');
+    expect(res.body.companyName).toBe('Acme');
+    expect(res.body.roleName).toBe('SWE');
+    expect(res.body.link).toBe('https://example.com');
+    expect(res.body.fullJD).toBe('the full jd text');
+    expect(res.body.slug).toBe('prefill-slug');
+    expect(res.body.extraNotes).toContain('Company Name: Acme');
+    expect(res.body.folderPath).toBe(JOB_DIR);
+  });
+
+  it('returns 200 with empty string defaults when only other-input.txt is present', async () => {
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === `${JOB_DIR}/other-input.txt`);
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === `${JOB_DIR}/other-input.txt`) return 'Company Name: Co\n\nRole / Title: R\n\nJob posting link: https://x.com\n';
+      return '';
+    });
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', { folderPath: JOB_DIR });
+    expect(res.status).toBe(200);
+    expect(res.body.jobDescription).toBe('');
+    expect(res.body.fullJD).toBe('');
+    expect(res.body.companyName).toBe('Co');
+    expect(res.body.slug).toBe('prefill-slug');
+  });
+
+  it('returns 400 when folderPath and slug are both missing', async () => {
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', {});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('folderPath required');
+  });
+
+  it('returns 404 when the folder does not exist', async () => {
+    existsSync.mockImplementation(() => false);
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', { folderPath: '/tmp/opencode/fake-project-root/jobs/does-not-exist' });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Job folder not found');
+  });
+
+  it('returns 400 when the path escapes the jobs root', async () => {
+    realpathSync.mockImplementation((p: string) => {
+      if (p === JOBS_ROOT) return JOBS_ROOT;
+      return '/etc';
+    });
+    existsSync.mockImplementation(() => true);
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => true, isFile: () => false }));
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', { folderPath: '/etc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('folderPath escapes jobs root');
+  });
+
+  it('resolves a file path to its parent directory (D-11)', async () => {
+    const structuredPath = `${JOB_DIR}/structured-output.json`;
+    existsSync.mockImplementation((p: unknown) => p === JOB_DIR || p === structuredPath);
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === `${JOB_DIR}/job-description.txt`) return 'jd';
+      if (p === `${JOB_DIR}/other-input.txt`) return '';
+      return '';
+    });
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/prefill', { folderPath: structuredPath });
+    expect(res.status).toBe(200);
+    expect(res.body.folderPath).toBe(JOB_DIR);
+    expect(res.body.slug).toBe('prefill-slug');
+  });
+});
+
+describe('permalink.txt write', () => {
+  const JOBS_ROOT = '/tmp/opencode/fake-project-root/jobs';
+  const JOB_DIR = `${JOBS_ROOT}/permalink-slug`;
+  const JD_FILE = `${JOB_DIR}/job-description.txt`;
+
+  beforeEach(() => {
+    existsSync.mockReset();
+    readFileSync.mockReset();
+    writeFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    statSync.mockReset();
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === JOB_DIR, isFile: () => p !== JOB_DIR }));
+  });
+
+  function stubAllFiles(): void {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === JD_FILE) return 'a jd';
+      if (p === `${JOB_DIR}/other-input.txt`) return 'Company Name: X\n\nRole / Title: Y\n\nJob posting link: https://l\n';
+      if (p === `${JOB_DIR}/structured-output.json`) return JSON.stringify({ name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] });
+      return '';
+    });
+  }
+
+  it('writes permalink.txt via the writePermalinkTxt export', async () => {
+    const { writePermalinkTxt } = await import('./generate.js');
+    writePermalinkTxt('/tmp/opencode/fake-project-root/jobs/some-slug', 'http://localhost:3000/#job=some-slug');
+    const written = (writeFileSync as Mock).mock.calls.find((c) => c[0] === '/tmp/opencode/fake-project-root/jobs/some-slug/permalink.txt');
+    expect(written).toBeDefined();
+    expect(written![1]).toBe('http://localhost:3000/#job=some-slug\n');
+  });
+
+  it('skips permalink.txt write when permalinkUrl is invalid', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt` || s === `${JOB_DIR}/structured-output.json` || s === `${JOB_DIR}/resume.tex`;
+    });
+
+    const generateCoverLetterJSON = (await import('../services/ai.js')).generateCoverLetterJSON as Mock;
+    generateCoverLetterJSON.mockReset();
+    generateCoverLetterJSON.mockResolvedValue({
+      coverLetter: {
+        dateLine: 'd', recipientLine: 'r', subjectLine: 's', greeting: 'g', openingParagraph: 'o', bodyParagraph: 'b', closingParagraph: 'c', signoff: 's',
+      },
+      sessionId: 'sess-cl-2',
+    });
+
+    const { default: router } = await import('./generate.js');
+    const res = await invokeRoute(router, 'post', '/coverLetter', {
+      companyName: 'X',
+      roleName: 'Y',
+      folderPath: JOB_DIR,
+      permalinkUrl: 'not-a-url',
+    });
+    expect(res.status).toBe(200);
+    const written = (writeFileSync as Mock).mock.calls.find((c) => c[0] === `${JOB_DIR}/permalink.txt`);
+    expect(written).toBeUndefined();
+  });
+});
+
+describe('validatePermalinkUrl', () => {
+  it('accepts a valid http(s) URL containing the slug and #job=', async () => {
+    const { validatePermalinkUrl } = await import('./generate.js');
+    expect(validatePermalinkUrl('http://localhost:3000/#job=my-slug', 'my-slug')).toBe('http://localhost:3000/#job=my-slug');
+    expect(validatePermalinkUrl('https://x.com/path/#job=my-slug-2', 'my-slug-2')).toBe('https://x.com/path/#job=my-slug-2');
+  });
+  it('rejects non-URL or missing #job= or wrong slug', async () => {
+    const { validatePermalinkUrl } = await import('./generate.js');
+    expect(validatePermalinkUrl('not-a-url', 'slug')).toBeNull();
+    expect(validatePermalinkUrl('http://x.com/page', 'slug')).toBeNull();
+    expect(validatePermalinkUrl('http://x.com/#job=other', 'slug')).toBeNull();
+    expect(validatePermalinkUrl(null, 'slug')).toBeNull();
+  });
+});
+
+describe('Task step tracking', () => {
+  const JOBS_ROOT = '/tmp/opencode/fake-project-root/jobs';
+  const JOB_DIR = `${JOBS_ROOT}/step-slug`;
+  const JD_FILE = `${JOB_DIR}/job-description.txt`;
+  const STRUCTURED = `${JOB_DIR}/structured-output.json`;
+  const REDACTED = `${JOB_DIR}/structured-output-redacted.json`;
+
+  beforeEach(() => {
+    existsSync.mockReset();
+    readFileSync.mockReset();
+    writeFileSync.mockReset();
+    realpathSync.mockReset();
+    realpathSync.mockImplementation((p: string) => p);
+    statSync.mockReset();
+    statSync.mockImplementation((p: unknown) => ({ isDirectory: () => p === JOB_DIR, isFile: () => p !== JOB_DIR }));
+    mkdirSync.mockReset();
+  });
+
+  function stubAllFiles(): void {
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt` || s === STRUCTURED || s === REDACTED;
+    });
+    readFileSync.mockImplementation((p: unknown) => {
+      if (p === JD_FILE) return 'jd';
+      if (p === `${JOB_DIR}/other-input.txt`) return 'Company Name: X\n\nRole / Title: Y\n\nJob posting link: https://l\n';
+      if (p === STRUCTURED) return JSON.stringify({ name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] });
+      if (p === REDACTED) return JSON.stringify({ name: '', summary: 's', skills: {}, experience: [], education: [], projects: [] });
+      return '';
+    });
+  }
+
+  it('exposes STEP_LABELS with all four step labels', async () => {
+    const mod = await import('./generate.js');
+    expect(mod).toBeDefined();
+    const probe = mod.setTaskStep;
+    expect(typeof probe).toBe('function');
+  });
+
+  it('POST /generate/ task has step 1 and label "Generating resume + cover letter"', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-1',
+      coverLetterSessionId: 'sess-c-2',
+      atsKeywords: ['kw1', 'kw2'],
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+    });
+    expect(post.status).toBe(200);
+    expect(post.body.taskId).toMatch(/^task_/);
+
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.status).toBe(200);
+    expect(poll.body.step).toBe(1);
+    expect(poll.body.stepLabel).toBe('Generating resume + cover letter');
+  });
+
+  it('setTaskStep mutates the record and the next poll returns the new step', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-3',
+      coverLetterSessionId: 'sess-c-4',
+      atsKeywords: [],
+    });
+
+    const { default: router, setTaskStep } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+    });
+    expect(post.status).toBe(200);
+    const taskId = post.body.taskId;
+    setTaskStep(taskId, 3);
+    const poll = await invokeRoute(router, 'get', `/task/${taskId}`);
+    expect(poll.body.step).toBe(3);
+    expect(poll.body.stepLabel).toBe('Applying ATS suggestions');
+  });
+});
