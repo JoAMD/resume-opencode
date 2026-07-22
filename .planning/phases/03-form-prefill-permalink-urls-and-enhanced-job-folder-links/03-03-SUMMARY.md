@@ -160,6 +160,30 @@ a human on a running dev server (`npm start`) on the user's LAN
   permalink visual change from the `copyToClipboard` migration would
   leave the permalink pointing at the old call site mid-rollout).
 
+## Post-ship dev fix (commit 289c12f)
+
+User feedback on the ship: the chip-style monospace pill + Copy button
+read as a UI component, not a URL. Replaced the visual treatment:
+
+- `.result-permalink__url` no longer carries the `#1a1a2e` background,
+  padding, or border-radius. The monospace font stays (URLs benefit
+  from it) and the color switches to the link-blue `#4f8ef7` with
+  `text-decoration: underline` on `:hover` so it visibly behaves like
+  a browser link.
+- `.result-permalink` is now a flex row (`display: flex;
+  align-items: baseline; gap: 6px; flex-wrap: wrap`) with the URL
+  flexing (`flex: 1 1 auto; min-width: 0`) so the Copy button sits
+  cleanly to the right regardless of URL length. The "Permalink:"
+  label remains the first flex item as a text node.
+- `docs/FEATURES.md` "Permalink URL" bullet rewritten to describe the
+  plain-link treatment.
+
+Not in scope: the user also reported "Open all PDFs" only opens
+`resume.pdf`. Root cause is the browser popup blocker — `window.open`
+called twice from the same click handler — the second call returns
+`null` silently in Chrome/Edge. Per user direction, this is left as-is
+(a browser limitation, not a code defect).
+
 ## Self-Check
 
 - [x] All sub-steps executed.
