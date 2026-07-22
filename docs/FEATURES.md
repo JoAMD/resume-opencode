@@ -25,8 +25,8 @@ understand the current surface without reading the source or the git log.
 - **Permalink URL**: After any successful generation the URL hash updates to
   `#job=<slug>` and a `permalink.txt` file is written to the job folder. The
   user can copy the URL and re-open the folder from any browser tab. The
-  permalink is rendered as a monospace code-style anchor with a small Copy
-  button next to it.
+  permalink is rendered as a plain monospace URL (no chip background) with
+  underline-on-hover and a small Copy button next to it.
 - **Form prefill**: Loading a permalink or typing a folder path prefills the
   form from `job-description.txt`, `other-input.txt`, and `full-jd.txt`. A
   confirm dialog appears if the form is already non-empty.
