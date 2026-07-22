@@ -184,6 +184,46 @@ called twice from the same click handler — the second call returns
 `null` silently in Chrome/Edge. Per user direction, this is left as-is
 (a browser limitation, not a code defect).
 
+## Post-ship dev fix 2 — VDS prefill on permalink load (commit a8261dc)
+
+User follow-up: "Can I also prefill Diff two backup versions with the
+folder name?" The wiring for the VDS panel was already in place inside
+`initSuggestionsPanel` in `public/suggestions.js` (the `lastJobDir` read
+at line 594, the `loadVersionDropdowns` call at line 642, the existing
+smart-default version selection at lines 614-624). The defect was a
+**race condition**: `runPrefill` and `initSuggestionsPanel` boot in
+parallel on page load, and `initSuggestionsPanel`'s synchronous read of
+`lastJobDir` almost always fired BEFORE `runPrefill`'s
+`await fetch('/generate/prefill')` resolved. So on a permalink load the
+VDS folder input stayed empty even though the code "looked" right.
+
+Fix (Option A — CustomEvent pub/sub):
+
+- `public/index.html` `runPrefill` now dispatches
+  `window.dispatchEvent(new CustomEvent('prefill-complete', { detail: { slug: data.slug, folderPath: data.folderPath, source } }))`
+  right after `lastJobDir` is set (now at line 843). The `source`
+  parameter distinguishes `'hash'` (permalink), `'blur'` (folder-path
+  typing), and any future caller.
+- `public/suggestions.js` `initSuggestionsPanel` replaces the sync
+  one-shot read with a `prefillVdsPanel(slug)` helper invoked from:
+  1. A one-shot sync read — covers the case where
+     `initSuggestionsPanel` boots AFTER `runPrefill` finishes (rare
+     but possible if `/generate/prefill` is fast and the suggestions
+     template fetch is slow).
+  2. A `'prefill-complete'` window listener — covers permalink hash,
+     folder-path blur, and any future caller of `runPrefill`.
+- The smart-default version selection in `loadVersionDropdowns` is
+  unchanged (user confirmed "keep the existing smart-default logic"):
+  source = second-latest backup, target = latest backup (or `current`
+  if only one backup exists).
+- `docs/FEATURES.md` gets a new "Version diff selector" bullet
+  documenting the panel and its prefill behavior. (No "Version diff
+  selector" section existed previously; the bullet is placed after
+  "Result block" where "Compare with latest backup" already lives.)
+
+Subagent-executed; orchestrator spot-checked the diff before commit
+and ran the full verification (248/248 tests, build clean).
+
 ## Self-Check
 
 - [x] All sub-steps executed.
