@@ -840,6 +840,7 @@
         }
         lastJobDir = data.slug;
         globalThis.__resumeOpencode.lastJobDir = data.slug;
+        window.dispatchEvent(new CustomEvent('prefill-complete', { detail: { slug: data.slug, folderPath: data.folderPath, source } }));
         document.getElementById('folderPath').value = data.folderPath;
         renderResultBlock(data.slug, 'prefill');
         sessionStorage.setItem('taskId_' + data.slug, '');

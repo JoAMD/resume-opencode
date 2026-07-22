@@ -591,8 +591,17 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   const vdsFolderList = el('vds-folder-list');
 
   if (vdsFolderInput && vdsSourceVersion && vdsTargetVersion && vdsDiffBtn) {
-    const lastJobDir = globalThis.__resumeOpencode && globalThis.__resumeOpencode.lastJobDir;
-    if (lastJobDir) vdsFolderInput.value = lastJobDir;
+    function prefillVdsPanel(slug) {
+      if (!slug) return;
+      vdsFolderInput.value = slug;
+      loadVersionDropdowns(slug);
+    }
+    const initialSlug = globalThis.__resumeOpencode && globalThis.__resumeOpencode.lastJobDir;
+    if (initialSlug) prefillVdsPanel(initialSlug);
+    window.addEventListener('prefill-complete', (e) => {
+      const slug = e && e.detail && e.detail.slug;
+      prefillVdsPanel(slug);
+    });
 
     async function loadVersionDropdowns(folder) {
       if (!folder) return;

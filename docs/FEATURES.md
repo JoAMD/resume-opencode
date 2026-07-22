@@ -35,6 +35,11 @@ understand the current surface without reading the source or the git log.
   as clickable links with copy buttons. **Open all PDFs** opens both PDFs in
   new tabs. **Compare with latest backup** reuses the diff modal to show what
   changed since the last saved version.
+- **Version diff selector**: A folder input plus two version dropdowns and a
+  diff button live in the suggestions panel. On permalink load the panel is
+  prefilled with the current job's folder name and its source/target version
+  dropdowns default to the second-latest and latest backups (or current and
+  latest when a backup is missing) so the diff modal opens with one click.
 - **Generation status**: While the auto-chain (generate → apply suggestions →
   ATS analysis) runs, each `taskId` is recorded in
   `sessionStorage['taskId_<slug>']` (and the chain in
