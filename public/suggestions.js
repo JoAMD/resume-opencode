@@ -339,6 +339,7 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       diffPre.textContent = `Network error: ${err && err.message ? err.message : err}`;
     }
   }
+  globalThis.openDiffModal = openDiffModal;
 
   function closeDiffModal() {
     diffModalRoot.classList.add('hidden');
@@ -681,5 +682,3 @@ if (document.readyState === 'loading') {
 } else {
   bootstrap();
 }
-
-globalThis.openDiffModal = openDiffModal;

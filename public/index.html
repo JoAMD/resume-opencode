@@ -211,7 +211,7 @@
         OpenCode session: <code id="session-id-value"></code>
         <button type="button" id="session-id-copy" class="button-tiny">Copy</button>
       </span>
-      <p id="result-permalink" class="result-permalink hidden">Permalink: <a id="permalink-link" href="#" target="_blank"></a> <button type="button" id="copy-permalink-btn" class="button-tiny">Copy</button></p>
+      <p id="result-permalink" class="result-permalink hidden">Permalink: <a id="permalink-link" class="result-permalink__url" href="#" target="_blank" rel="noopener noreferrer"></a> <button type="button" id="copy-permalink-btn" class="button-tiny">Copy</button></p>
       <div id="result-artifacts" class="result-artifacts hidden"></div>
       <div class="result-actions hidden" id="result-actions">
         <button type="button" id="open-all-pdfs-btn" class="button button-secondary button-small">Open all PDFs</button>
@@ -241,19 +241,48 @@
       sessionStorage.setItem('autoApplySuggestions', String(autoApplyCheckbox.checked));
     });
 
+    // copyToClipboard helper — prefers the Async Clipboard API on secure contexts
+    // and falls back to a temporary <textarea> + execCommand('copy') on insecure
+    // origins (e.g. http://192.168.x.x:3000) where navigator.clipboard rejects.
+    async function copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (e) {
+          console.error('clipboard write failed', e);
+        }
+      }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) {
+        console.error('clipboard fallback failed', e);
+        return false;
+      }
+    }
+
     // Copy OpenCode session id to clipboard
     document.getElementById('session-id-copy').addEventListener('click', async () => {
       const value = document.getElementById('session-id-value').textContent || '';
       if (!value) return;
-      try {
-        await navigator.clipboard.writeText(value);
-        const btn = document.getElementById('session-id-copy');
-        const original = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = original; }, 1200);
-      } catch (e) {
-        console.error('clipboard write failed', e);
-      }
+      const ok = await copyToClipboard(value);
+      if (!ok) return;
+      const btn = document.getElementById('session-id-copy');
+      const original = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = original; }, 1200);
     });
 
     // Audio context for notification sound
@@ -854,11 +883,10 @@
         btn.textContent = 'Copy';
         btn.addEventListener('click', async () => {
           const absolute = window.location.origin + a.getAttribute('href');
-          try {
-            await navigator.clipboard.writeText(absolute);
-            btn.textContent = 'Copied!';
-            setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
-          } catch (e) { console.error('clipboard write failed', e); }
+          const ok = await copyToClipboard(absolute);
+          if (!ok) return;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
         });
         row.appendChild(a);
         row.appendChild(btn);
@@ -874,11 +902,10 @@
       permalink.classList.remove('hidden');
       const copyPerm = document.getElementById('copy-permalink-btn');
       copyPerm.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(url);
-          copyPerm.textContent = 'Copied!';
-          setTimeout(() => { copyPerm.textContent = 'Copy'; }, 1200);
-        } catch (e) { console.error('clipboard write failed', e); }
+        const ok = await copyToClipboard(url);
+        if (!ok) return;
+        copyPerm.textContent = 'Copied!';
+        setTimeout(() => { copyPerm.textContent = 'Copy'; }, 1200);
       };
 
       document.getElementById('result-actions').classList.remove('hidden');
@@ -1059,12 +1086,12 @@
     });
 
     // Copy button
-    document.getElementById('copy-path-btn').addEventListener('click', () => {
-      navigator.clipboard.writeText(folderPathInput.value).then(() => {
-        const copyBtn = document.getElementById('copy-path-btn');
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
-      });
+    document.getElementById('copy-path-btn').addEventListener('click', async () => {
+      const ok = await copyToClipboard(folderPathInput.value);
+      if (!ok) return;
+      const copyBtn = document.getElementById('copy-path-btn');
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
     });
 
     folderPathInput.addEventListener('blur', (e) => {

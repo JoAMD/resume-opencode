@@ -565,6 +565,8 @@ button[type="submit"]:disabled,
 
 .result-permalink { font-size: 0.9em; color: #888; margin-top: 8px; }
 .result-permalink code { background: #1a1a2e; padding: 2px 6px; border-radius: 3px; }
+.result-permalink__url { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.95em; background: #1a1a2e; color: #e0e0e0; padding: 2px 6px; border-radius: 3px; word-break: break-all; text-decoration: none; }
+.result-permalink__url:hover { background: #2a2a4e; color: #fff; }
 .result-permalink.hidden { display: none; }
 
 .result-artifacts { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
