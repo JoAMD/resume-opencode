@@ -363,6 +363,16 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
   diffModalRoot.addEventListener('click', (e) => {
     if (e.target === diffModalRoot) closeDiffModal();
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!diffModalRoot.classList.contains('hidden')) {
+      e.preventDefault();
+      closeDiffModal();
+    } else if (!popoverRoot.classList.contains('hidden')) {
+      e.preventDefault();
+      closeFilePopover();
+    }
+  });
   if (diffViewHunksBtn) {
     diffViewHunksBtn.addEventListener('click', () => {
       switchToHunksView(lastUnifiedDiff);
