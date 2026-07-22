@@ -6,12 +6,12 @@ current_phase: 02
 current_phase_name: version-diff-selector-fire-and-forget-ats-analysis
 status: complete
 stopped_at: Phase 03 context gathered
-last_updated: "2026-07-21T03:03:59.616Z"
+last_updated: "2026-07-21T14:54:59.687Z"
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 7
-  completed_plans: 6
+  total_plans: 10
+  completed_plans: 8
 ---
 
 # Project State: resume-opencode — Diff Viewer Milestone (M1)
@@ -113,3 +113,7 @@ Run `/gsd-plan-phase 1` to begin planning Phase 1. Expected plan shape, per `RES
 **Last session:** 2026-07-21T03:03:59.601Z
 **Stopped at:** Phase 03 context gathered
 **Resume file:** .planning/phases/03-form-prefill-permalink-urls-and-enhanced-job-folder-links/03-CONTEXT.md
+
+## Decisions
+
+- [Phase ?]: Phase 3 gap-closure override: 20 D-NN items reported as uncovered but are implemented in shipped 03-01/03-02 plans (predate gate)
