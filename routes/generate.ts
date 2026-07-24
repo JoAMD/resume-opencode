@@ -399,7 +399,11 @@ router.post('/coverLetter', async (req, res) => {
     if (validatedPermalink) {
       try { writePermalinkTxt(jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
     }
-    res.json({ sessionId, ...coverUrls });
+    res.json({
+      sessionId,
+      ...(coverUrls.coverPdfUrl ? { pdfUrl: coverUrls.coverPdfUrl } : {}),
+      ...(coverUrls.coverTxtUrl ? { txtUrl: coverUrls.coverTxtUrl } : {}),
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     logError('Cover letter error:', err);
