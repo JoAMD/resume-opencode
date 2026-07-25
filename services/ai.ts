@@ -1381,9 +1381,27 @@ function buildResumeSearchText(resume: ResumeData): string {
 }
 
 const ATS_KEYWORD_EXTRACTION_JSON_SCHEMA = {
-  type: "array",
-  items: { type: "string" },
+  type: "object",
+  properties: {
+    keywords: { type: "array", items: { type: "string" } },
+  },
+  required: ["keywords"],
 };
+
+export function parseATSKeywordExtractionResponse(parsed: unknown): string[] {
+  const keywords = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { keywords?: unknown })?.keywords)
+      ? (parsed as { keywords: unknown[] }).keywords
+      : null;
+  if (keywords === null) {
+    return [];
+  }
+  return keywords
+    .filter((k: unknown) => typeof k === 'string' && k.trim().length > 0)
+    .map((k: string) => k.trim().toLowerCase())
+    .sort((a: string, b: string) => a.localeCompare(b));
+}
 
 export async function extractATSKeywordsFromJDViaAI(
   jobDescription: string
@@ -1402,14 +1420,7 @@ export async function extractATSKeywordsFromJDViaAI(
       jsonSchema: ATS_KEYWORD_EXTRACTION_JSON_SCHEMA,
     }));
 
-    const parsed = result.structured;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((k: unknown) => typeof k === 'string' && k.trim().length > 0)
-      .map((k: string) => k.trim().toLowerCase())
-      .sort((a: string, b: string) => a.localeCompare(b));
+    return parseATSKeywordExtractionResponse(result.structured);
   } catch (err) {
     logError('extractATSKeywordsFromJDViaAI failed:', err);
     return [];
