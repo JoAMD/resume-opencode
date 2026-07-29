@@ -109,6 +109,17 @@ Plans:
 
 - [ ] TBD (run /gsd-plan-phase 3 to break down)
 
+### Phase 4: Fix ATS analysis schema enforcement
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 3
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 4 to break down)
+
 ---
 *Roadmap created: 2026-07-18*
 *Last updated: 2026-07-18 after brownfield add-on milestone initialization*

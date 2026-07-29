@@ -185,6 +185,22 @@ JSON in place. The cover letter is **not** touched by this flow.
   non-recursive file inside the job directory. Every attached path is
   checked server-side to make sure its realpath stays inside the job
   directory.
+- **Auto-apply after generation** — a "Auto-apply suggestions after
+  generation" checkbox on the main form (checked by default, persisted in
+  `sessionStorage['autoApplySuggestions']`) wires a fire-and-forget chain:
+  after a successful generation, the client calls
+  `GET /generate/listJobFiles?jobDir=<slug>` first, keeps only the
+  auto-attach files that actually exist in the job folder, and then POSTs
+  the trimmed list to `/generate/applySuggestions`. This lets the chain
+  run cleanly on a brand-new job where `ats-analysis.md` does not yet
+  exist; the new prompt wording means the auto-apply still works without
+  the ATS file (the user-suggestion field falls back to "Review and
+  improve this resume" and the model edits the resume based on the resume
+  itself). The auto-apply request body uses the request schema's
+  `attachedFilePaths` field — earlier versions of the auto-apply code
+  sent `attachedFiles`, which the server silently ignored, so the chain
+  used to run with zero attached context. That bug is fixed alongside
+  this prompt change.
 - **Backup** — before any AI call, the current `structured-output.json`,
   `resume.pdf`, and `resume.tex` are copied to
   `jobs/<slug>/backups/v1/` (auto-incrementing). The backup path is shown
@@ -207,6 +223,18 @@ JSON in place. The cover letter is **not** touched by this flow.
   no-op-after-retry, the task resolves to `status: 'error'` with
   `error: 'no-op'` and `result: { backupPath, backupVersion }` so the UI
   can recover.
+- **Input priority (user suggestions > ATS analysis)** — when the user
+  attached `ats-analysis.md`, the system prompt (`prompts/fix-suggestions-prompt.txt`)
+  instructs the model that the user's free-text suggestions always take
+  priority over the ATS recommendations. The ATS block is treated as a
+  *guideline* used to surface small honest edits the user did not
+  explicitly call out (e.g. "the JD asks for X — weave it into the summary
+  if it's already implicit in the experience"). If the user gave a generic
+  suggestion like "Review and improve this resume", the ATS recommendations
+  become the de-facto suggestion set. In both cases the model must never
+  invent experience the resume does not already imply; when the only way
+  to close an ATS gap would be fabrication, the model skips it and notes
+  the gap in its final summary.
 - **Files written on success** — `structured-output.json`, `resume.tex`,
   `resume.pdf` in the job directory (cover letter files are not
   overwritten).

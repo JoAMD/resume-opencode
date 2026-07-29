@@ -132,6 +132,30 @@ a generation completes, a new panel below the existing buttons in the UI
 - Click **Apply suggestions** to POST `/generate/applySuggestions` and
   poll the task until complete.
 
+**Input priority:** user suggestions always win over the attached ATS
+analysis. The system prompt (`prompts/fix-suggestions-prompt.txt`) tells the
+model to use the ATS block as a *guideline* — surfacing small honest edits
+the user did not explicitly call out (e.g. "JD asks for X — weave it into
+the summary if it's already implicit in the experience") — but never to
+overrule the user. If the user gave a generic suggestion like "Review and
+improve this resume" and the ATS analysis is attached, the ATS
+recommendations become the de-facto suggestion set. In both cases, the
+model must not invent experience; when the only way to close an ATS gap
+is fabrication, it skips the change and notes the gap in the final
+summary.
+
+**Auto-apply after generation:** an "Auto-apply suggestions after
+generation" checkbox (checked by default, persisted in
+`sessionStorage['autoApplySuggestions']`) fires a fire-and-forget
+`POST /generate/applySuggestions` right after a successful generation. The
+client first calls `GET /generate/listJobFiles?jobDir=<slug>` and keeps
+only the auto-attach files that exist in the job folder, so a brand-new
+job (where `ats-analysis.md` has not been generated yet) still triggers
+the auto-apply. The fallback user-suggestion for the auto-apply is
+"Review and improve this resume"; combined with the input-priority rule
+above, the model still produces useful edits even when no ATS file is
+attached.
+
 ### Permalink URLs and form prefill
 
 Each successful resume generation produces a stable shareable URL of the form

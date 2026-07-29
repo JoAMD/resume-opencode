@@ -333,6 +333,62 @@ describe('applySuggestions', () => {
     const real = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
     expect(real.summary).toBe('Updated');
   });
+
+  it('places ATS analysis block AFTER user suggestions in the user content (priority order)', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => { r.summary = 'edited'; });
+      return { sessionId: 'ses_priority' };
+    });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    await applySuggestions({
+      jobDir,
+      userSuggestions: 'Tighten the summary.',
+      attachedFiles: [
+        { name: 'ats-analysis.md', path: path.join(jobDir, 'ats-analysis.md') },
+        { name: 'job-description.txt', path: path.join(jobDir, 'job-description.txt') },
+      ],
+      resumePath,
+      redactedResumePath: redactedPath,
+    });
+
+    const callOpts = runOpenCodeMock.mock.calls[0][0];
+    const userContent: string = callOpts.userContent;
+    expect(userContent).toContain('USER SUGGESTIONS:');
+    expect(userContent).toContain('Tighten the summary.');
+    expect(userContent).toContain('ATS-ANALYSIS.MD:');
+    expect(userContent).toContain('# ATS analysis');
+    const userSuggestionsIdx = userContent.indexOf('USER SUGGESTIONS:');
+    const atsIdx = userContent.indexOf('ATS-ANALYSIS.MD:');
+    expect(userSuggestionsIdx).toBeGreaterThanOrEqual(0);
+    expect(atsIdx).toBeGreaterThan(userSuggestionsIdx);
+  });
+
+  it('omits the ATS analysis block when ats-analysis.md is not attached', async () => {
+    const { jobDir, resumePath, redactedPath } = makeFixture();
+    runOpenCodeMock.mockImplementationOnce(async () => {
+      applyEditsToFile(resumePath, (r) => { r.summary = 'edited'; });
+      return { sessionId: 'ses_no_ats' };
+    });
+
+    const { applySuggestions } = await import('./fixSuggestionsService.js');
+    await applySuggestions({
+      jobDir,
+      userSuggestions: 'Tighten the summary.',
+      attachedFiles: [
+        { name: 'job-description.txt', path: path.join(jobDir, 'job-description.txt') },
+      ],
+      resumePath,
+      redactedResumePath: redactedPath,
+    });
+
+    const callOpts = runOpenCodeMock.mock.calls[0][0];
+    const userContent: string = callOpts.userContent;
+    expect(userContent).toContain('USER SUGGESTIONS:');
+    expect(userContent).not.toContain('ATS-ANALYSIS.MD:');
+    expect(userContent).not.toContain('# ATS analysis');
+  });
 });
 
 async function expectApplySuggestionsRejects(input: Record<string, unknown>, matcher: RegExp) {
