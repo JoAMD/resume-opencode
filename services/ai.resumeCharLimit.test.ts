@@ -188,7 +188,8 @@ describe('enforceResumeCharLimit', () => {
     const { enforceResumeCharLimit } = await loadModule();
     const small = buildSmallResume();
     const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
-    expect(result.characterCountTrimmed).toBe('false');
+    expect(result.resume.characterCountTrimmed).toBe('false');
+    expect(result.backup).toBeUndefined();
     expect(sessionCalls.filter((c) => c.method === 'prompt')).toHaveLength(0);
   });
 
@@ -196,18 +197,18 @@ describe('enforceResumeCharLimit', () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '2';
     const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
     const result = await runTrimTestCase(enforceResumeCharLimit, buildOversizedResume(), RESUME_CHAR_LIMIT);
-    expect(result.characterCountTrimmed).toBe('true');
+    expect(result.resume.characterCountTrimmed).toBe('true');
     const prompts = sessionCalls.filter((c) => c.method === 'prompt');
     expect(prompts.length).toBeLessThanOrEqual(2);
-    expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
+    expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
   });
 
   it('returns trimmed=true and stops looping as soon as the trimmed result fits', async () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
     const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
     const result = await runTrimTestCase(enforceResumeCharLimit, buildSmallResume(), RESUME_CHAR_LIMIT);
-    expect(result.characterCountTrimmed).toBe('true');
-    expect(getResumeCharCountLocal(result)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
+    expect(result.resume.characterCountTrimmed).toBe('true');
+    expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
     const prompts = sessionCalls.filter((c) => c.method === 'prompt');
     expect(prompts).toHaveLength(1);
   });
@@ -216,8 +217,8 @@ describe('enforceResumeCharLimit', () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
     const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
     const result = await runTrimTestCase(enforceResumeCharLimit, 'not an object', RESUME_CHAR_LIMIT);
-    expect(result.characterCountTrimmed).toBe('true');
-    expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
+    expect(result.resume.characterCountTrimmed).toBe('true');
+    expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
     const prompts = sessionCalls.filter((c) => c.method === 'prompt');
     expect(prompts).toHaveLength(1);
   });
@@ -234,7 +235,7 @@ describe('enforceResumeCharLimit', () => {
 
   it('still creates a session for trims when no providedSessionId is supplied (and still does not delete it)', async () => {
     const { result, calls } = await runSessionLifecycleCase({ maxAttempts: 1, logDir: tmpLogDir });
-    expect(result.characterCountTrimmed).toBe('true');
+    expect(result.resume.characterCountTrimmed).toBe('true');
     expect(calls.creates).toHaveLength(1);
     expect(calls.deletes).toHaveLength(0);
     expect(calls.prompts).toHaveLength(1);
@@ -263,6 +264,49 @@ describe('enforceResumeCharLimit', () => {
     expect(prompts).toHaveLength(1);
     const fullPrompt = prompts[0].body.parts[0].text;
     expect(fullPrompt).not.toContain('JOB FOLDER (only directory you may read from or write to):');
+  });
+
+  it('creates a pre-trim backup v1 when the resume is over the limit and jobDir is provided', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-backup-'));
+    try {
+      const preTrimJson = JSON.stringify(buildOversizedResume(), null, 2);
+      fs.writeFileSync(path.join(jobDir, 'structured-output.json'), preTrimJson, 'utf8');
+      const { enforceResumeCharLimit } = await loadModule();
+      mockStructuredResponse = buildSmallResume();
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(result.backup).toBeDefined();
+      expect(result.backup?.version).toBe(1);
+      expect(result.backup?.files).toContain('structured-output.json');
+      const backed = JSON.parse(fs.readFileSync(path.join(result.backup!.backupDir, 'structured-output.json'), 'utf8'));
+      expect(backed.name).toBe(buildOversizedResume().name);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not create a backup when the resume is already under the limit', async () => {
+    const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-nobackup-'));
+    try {
+      const { enforceResumeCharLimit } = await loadModule();
+      const small = buildSmallResume();
+      const result = await enforceResumeCharLimit(small, 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('false');
+      expect(result.backup).toBeUndefined();
+      expect(fs.existsSync(path.join(jobDir, 'backups'))).toBe(false);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits the backup when jobDir is not provided even if the resume is over the limit', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const { enforceResumeCharLimit } = await loadModule();
+    mockStructuredResponse = buildSmallResume();
+    const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
+    expect(result.resume.characterCountTrimmed).toBe('true');
+    expect(result.backup).toBeUndefined();
   });
 });
 
@@ -293,8 +337,8 @@ async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: stri
   const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
   mockStructuredResponse = buildOversizedResume();
   const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: args.logDir, providedSessionId: args.providedSessionId });
-  expect(result.characterCountTrimmed).toBe('true');
-  expect(getResumeCharCountLocal(result)).toBeGreaterThan(RESUME_CHAR_LIMIT);
+  expect(result.resume.characterCountTrimmed).toBe('true');
+  expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
   return {
     result,
     calls: {

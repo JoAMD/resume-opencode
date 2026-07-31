@@ -18,6 +18,18 @@ understand the current surface without reading the source or the git log.
   to `OPENCODE_RESUME_TRIM_MAX_ATTEMPTS` (default 3) times, reusing the same
   OpenCode session. If all attempts fail the result is returned with
   `characterCountTrimmed: "true"`.
+- Pre-trim backup: when the page-limit guard actually fires, the
+  pre-trim `structured-output.json` is written to the job folder and copied to
+  `jobs/<slug>/backups/v1/` (auto-incrementing) **before** the first trim
+  reprompt, so a side-by-side diff is always available. The task result
+  includes `trimBackupPath` and `trimBackupVersion` (omitted when no trim was
+  needed) and the UI renders a **Compare with pre-trim backup v{N}** button
+  that opens the existing diff modal against the pre-trim version. The backup
+  uses the same `createVersionedBackup(jobDir, 'resume')` helper as Apply
+  suggestions, so the on-disk files (`structured-output.json` + any prior
+  `resume.{tex,pdf}`) end up under `backups/vN/` and can be diffed via
+  `GET /generate/diffResume?jobDir=<slug>&version=vN`. Skipped automatically
+  when the resume is under the limit.
 - The trim prompt is told the absolute path of the current job folder and
   instructed to restrict all file reads and writes (including any scratch file
   used for the `count-characters` tool) to that folder. `/tmp` and other paths

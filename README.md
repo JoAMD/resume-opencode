@@ -74,6 +74,7 @@ The AI ATS analyser is the only AI call that sees a representation of the user's
 - `getResumeCharCount()` measures `JSON.stringify(resume).length` authoritatively on the server.
 - `enforceResumeCharLimit()` in `services/ai.ts` calls the model up to `OPENCODE_RESUME_TRIM_MAX_ATTEMPTS` (default 3) times with `prompts/trim-resume-prompt.txt`, **reusing the same OpenCode session id** as the original generation so each trim attempt sees the prior conversation.
 - The trim prompt is told the absolute path of the current job folder and instructed to restrict all file reads and writes (including any scratch file used for the `count-characters` tool) to that folder. `/tmp` and other paths are explicitly forbidden in the system prompt.
+- Before the first trim attempt, the pre-trim `structured-output.json` (and any pre-existing `resume.{tex,pdf}`) is copied to `jobs/<slug>/backups/vN/` via `createVersionedBackup(jobDir, 'resume')`, and the task result includes `trimBackupPath` / `trimBackupVersion` so the UI can offer a side-by-side diff of what the trim changed. Skipped when the resume is already under the limit or `jobDir` is unavailable.
 - If the resume is still over the limit after all attempts, the result is returned with `characterCountTrimmed: "true"` so downstream consumers (or a future UI banner — see `docs/plans/RESUME_PAGE_LIMIT_UI_PLAN.md`) can react.
 
 ### Cover letter output modes

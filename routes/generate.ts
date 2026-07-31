@@ -19,7 +19,7 @@ import {
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
 import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
-import { latestBackupVersion, listBackupVersions, listJobDirs } from '../services/backupService';
+import { latestBackupVersion, listBackupVersions, listJobDirs, BackupResult } from '../services/backupService';
 import { loadOtherInputFromDir, loadFullJdFromDir, loadJobDescriptionFromDir, resolveJobFolder } from '../services/jobDir';
 
 const router = Router();
@@ -1311,6 +1311,7 @@ async function executeGeneration(
   let atsKeywords: string[] = [];
   let sessionId: string;
   let coverLetterSessionId: string | undefined;
+  let trimBackup: BackupResult | undefined;
 
   const context = { companyName: companyName ?? '', roleName: roleName ?? '', generateWithoutJD: false, promptLogDir: jobDir.jobDir, jobDir: jobDir.jobDir };
 
@@ -1321,10 +1322,12 @@ async function executeGeneration(
     atsKeywords = combined.atsKeywords ?? [];
     sessionId = combined.sessionId;
     coverLetterSessionId = combined.coverLetterSessionId;
+    trimBackup = combined.trimBackup;
   } else {
     const resumeResult = await generateResumeJSON(jobDescription ?? '', extraNotes ?? '', context, options);
     resumeJSON = resumeResult.resume;
     sessionId = resumeResult.sessionId;
+    trimBackup = resumeResult.trimBackup;
   }
 
   lastGeneratedResumeJSON = resumeJSON;
@@ -1348,6 +1351,10 @@ async function executeGeneration(
     sessionId,
   };
   if (coverLetterSessionId) result.coverLetterSessionId = coverLetterSessionId;
+  if (trimBackup) {
+    result.trimBackupPath = trimBackup.backupDir;
+    result.trimBackupVersion = trimBackup.version;
+  }
 
   if (coverLetterJSON) {
     lastGeneratedCoverLetterJSON = coverLetterJSON;

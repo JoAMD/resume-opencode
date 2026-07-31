@@ -2,6 +2,12 @@
 
 **Status:** Draft (post-step 2 of the server-side page-limit work)
 
+**Partial fulfillment:** the pre-trim backup is now surfaced in the UI
+as **Compare with pre-trim backup v{N}** in the result-actions row whenever
+trim actually fires. The button opens the existing diff modal against the
+backup, so the user can already see exactly what the trim changed. The
+remaining work below (char-count display, "trimmed" flag) is still open.
+
 ---
 
 ## TL;DR

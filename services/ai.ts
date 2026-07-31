@@ -5,6 +5,7 @@ import { loadEnv } from './loadEnv';
 import fs from 'fs';
 import path from 'path';
 import { findProjectRoot } from './paths';
+import { createVersionedBackup, BackupResult } from './backupService';
 
 loadEnv();
 const projectRoot = findProjectRoot(__dirname);
@@ -95,11 +96,18 @@ export async function finalizeResume(
   model: string,
   promptLogDir: string | undefined,
   meta: { callerLabel: string; providedSessionId?: string; jobDir?: string }
-): Promise<ResumeData> {
+): Promise<EnforceResumeCharLimitResult> {
   const initial = applyProfileOverrides(structured);
-  const resume = await enforceResumeCharLimit(initial, model, { promptLogDir, providedSessionId: meta.providedSessionId, jobDir: meta.jobDir });
-  log(`${meta.callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed);
-  return resume;
+  if (meta.jobDir) {
+    try {
+      fs.writeFileSync(path.join(meta.jobDir, 'structured-output.json'), JSON.stringify(initial, null, 2), 'utf8');
+    } catch (err) {
+      logError('finalizeResume: failed to write pre-trim structured-output.json, backup may be empty:', err);
+    }
+  }
+  const { resume, backup } = await enforceResumeCharLimit(initial, model, { promptLogDir, providedSessionId: meta.providedSessionId, jobDir: meta.jobDir });
+  log(`${meta.callerLabel} resume char count:`, getResumeCharCount(resume), 'limit:', RESUME_CHAR_LIMIT, 'trimmed:', resume.characterCountTrimmed, backup ? `pre-trim backup: v${backup.version}` : 'no pre-trim backup');
+  return { resume, backup };
 }
 
 const RESUME_TRIM_MAX_ATTEMPTS = Math.max(0, parseInt(process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS || '3', 10) || 3);
@@ -163,17 +171,35 @@ const RESUME_TRIM_JSON_SCHEMA = {
   required: ["name", "summary", "skills", "experience", "education"]
 };
 
+export interface EnforceResumeCharLimitResult {
+  resume: ResumeData;
+  backup?: BackupResult;
+}
+
 export async function enforceResumeCharLimit(
   resume: ResumeData,
   model: string,
   options: { promptLogDir?: string; providedSessionId?: string; jobDir?: string } = {}
-): Promise<ResumeData> {
+): Promise<EnforceResumeCharLimitResult> {
   const { promptLogDir, providedSessionId, jobDir } = options;
   let current = resume;
   let count = getResumeCharCount(current);
 
   if (count <= RESUME_CHAR_LIMIT) {
-    return { ...current, characterCountTrimmed: 'false' };
+    return { resume: { ...current, characterCountTrimmed: 'false' } };
+  }
+
+  let backup: BackupResult | undefined;
+  if (jobDir) {
+    try {
+      backup = createVersionedBackup(jobDir, 'resume');
+      log('enforceResumeCharLimit: pre-trim backup created at', backup.backupDir, '(v' + backup.version + ')');
+    } catch (err) {
+      logError('enforceResumeCharLimit: failed to create pre-trim backup, continuing without it:', err);
+      backup = undefined;
+    }
+  } else {
+    log('enforceResumeCharLimit: no jobDir provided, skipping pre-trim backup');
   }
 
   log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS, 'providedSessionId:', providedSessionId ?? '<none>');
@@ -194,12 +220,12 @@ export async function enforceResumeCharLimit(
       }));
     } catch (err) {
       logError(`enforceResumeCharLimit: trim attempt ${attempt} failed:`, err);
-      return { ...current, characterCountTrimmed: 'true' };
+      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
     }
 
     if (!result.structured || typeof result.structured !== 'object') {
       logError(`enforceResumeCharLimit: trim attempt ${attempt} returned non-object:`, result.structured);
-      return { ...current, characterCountTrimmed: 'true' };
+      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
     }
 
     current = result.structured as ResumeData;
@@ -207,12 +233,12 @@ export async function enforceResumeCharLimit(
     log(`enforceResumeCharLimit: attempt ${attempt} produced count ${count} (limit ${RESUME_CHAR_LIMIT})`);
 
     if (count <= RESUME_CHAR_LIMIT) {
-      return { ...current, characterCountTrimmed: 'true' };
+      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
     }
   }
 
   logError(`enforceResumeCharLimit: still over limit after ${RESUME_TRIM_MAX_ATTEMPTS} attempts (count=${count})`);
-  return { ...current, characterCountTrimmed: 'true' };
+  return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
 }
 
 const aiQueues: Map<string, Promise<unknown>> = new Map();
@@ -1130,6 +1156,7 @@ function buildInvalidResponseError(sessionId: string, rawModelOutput: string, de
 export interface GenerateResumeResult {
   resume: ResumeData;
   sessionId: string;
+  trimBackup?: BackupResult;
 }
 export interface GenerateCoverLetterResult {
   coverLetter: CoverLetterJSON;
@@ -1141,6 +1168,7 @@ export interface GenerateCombinedResult {
   atsKeywords: string[];
   sessionId: string;
   coverLetterSessionId: string;
+  trimBackup?: BackupResult;
 }
 
 export async function generateResumeJSON(
@@ -1163,10 +1191,11 @@ export async function generateResumeJSON(
     });
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: context?.promptLogDir, jsonSchema: RESUME_JSON_SCHEMA }));
-    const resume = await finalizeResume(result.structured, model, context?.promptLogDir, { callerLabel: 'generateResumeJSON', providedSessionId: result.sessionId, jobDir: context?.jobDir });
+    const { resume, backup: trimBackup } = await finalizeResume(result.structured, model, context?.promptLogDir, { callerLabel: 'generateResumeJSON', providedSessionId: result.sessionId, jobDir: context?.jobDir });
     return {
       resume,
       sessionId: result.sessionId,
+      trimBackup,
     };
   } catch (err) {
     logError('OpenCode generation error:', err);
@@ -1267,7 +1296,7 @@ export async function generateCombinedJSON(
     assertValidCoverLetter(result.structured.coverLetter);
     const coverLetterRaw = result.structured.coverLetter;
 
-    const resume = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId, jobDir: options?.jobDir });
+    const { resume, backup: trimBackup } = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId, jobDir: options?.jobDir });
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
     return {
       atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
@@ -1275,6 +1304,7 @@ export async function generateCombinedJSON(
       coverLetter,
       sessionId: result.sessionId,
       coverLetterSessionId: result.sessionId,
+      trimBackup,
     };
   } catch (err) {
     logError('OpenCode combined generation error:', err);
