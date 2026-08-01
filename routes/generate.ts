@@ -50,6 +50,7 @@ type GenerateRequestBody = {
   useCombinedGeneration?: boolean;
   force?: boolean;
   permalinkUrl?: string;
+  permalinkBaseUrl?: string;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -155,6 +156,13 @@ export function validatePermalinkUrl(raw: unknown, slug: string): string | null 
 export function writePermalinkTxt(realJobDir: string, permalinkUrl: string): void {
   fs.writeFileSync(path.join(realJobDir, 'permalink.txt'), permalinkUrl + '\n', 'utf8');
   log('Wrote permalink.txt for', realJobDir);
+}
+
+function buildPermalinkFromBase(rawBase: unknown, slug: string): string | null {
+  if (typeof rawBase !== 'string' || !rawBase) return null;
+  if (!/^https?:\/\//i.test(rawBase)) return null;
+  const trimmed = rawBase.replace(/#.*$/, '');
+  return `${trimmed}#job=${encodeURIComponent(slug)}`;
 }
 
 const RESUME_TYPE_LABELS: Record<string, string> = {
@@ -329,6 +337,11 @@ router.post('/', async (req, res) => {
     if (body.link?.trim()) {
       writeLinkToJobDir(jobDir.jobDir, body.link.trim());
     }
+    const earlyPermalink = validatePermalinkUrl(body.permalinkUrl, jobDir.slug)
+      ?? buildPermalinkFromBase(body.permalinkBaseUrl, jobDir.slug);
+    if (earlyPermalink) {
+      try { writePermalinkTxt(jobDir.jobDir, earlyPermalink); } catch (e) { logError('Failed to write permalink.txt at job creation:', e); }
+    }
     const taskId = createTaskId();
     taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
     res.json({ taskId, jobDir: jobDir.slug });
@@ -337,10 +350,6 @@ router.post('/', async (req, res) => {
       try {
         const { result, sessionId, coverLetterSessionId } = await executeGeneration(jobDir, options, { jobDescription, companyName, roleName, extraNotes, coverOutput, useCombinedGeneration });
         taskMap.set(taskId, { status: 'complete', result, startedAt: Date.now(), sessionId, coverLetterSessionId, step: 1, stepLabel: STEP_LABELS[1] });
-        const validatedPermalink = validatePermalinkUrl(body.permalinkUrl, jobDir.slug);
-        if (validatedPermalink) {
-          try { writePermalinkTxt(jobDir.jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
-        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Internal server error';
         logError('Background generation error:', err);
@@ -355,7 +364,7 @@ router.post('/', async (req, res) => {
 });
 
 router.post('/coverLetter', async (req, res) => {
-  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath, permalinkUrl } = req.body as GenerateRequestBody & { folderPath?: string };
+  const { companyName, roleName, jobDescription, extraNotes, coverOutput, modelSelect, useStarMethodForGovtRoles, folderPath, permalinkUrl, permalinkBaseUrl } = req.body as GenerateRequestBody & { folderPath?: string };
   if (!companyName || !roleName) {
     res.status(400).json({ error: 'companyName and roleName are required.' });
     return;
@@ -374,6 +383,14 @@ router.post('/coverLetter', async (req, res) => {
     return;
   }
 
+  const jobDir = resolveCoverLetterJobDir(companyName, roleName);
+  const slug = path.basename(jobDir);
+  const earlyPermalink = validatePermalinkUrl(permalinkUrl, slug)
+    ?? buildPermalinkFromBase(permalinkBaseUrl, slug);
+  if (earlyPermalink) {
+    try { writePermalinkTxt(jobDir, earlyPermalink); } catch (e) { logError('Failed to write permalink.txt at cover-letter job dir creation:', e); }
+  }
+
   try {
     const { coverLetter: coverLetterJSON, sessionId } = await generateCoverLetterJSON(
       resumeJSON,
@@ -385,7 +402,6 @@ router.post('/coverLetter', async (req, res) => {
     );
     lastGeneratedCoverLetterJSON = coverLetterJSON;
 
-    const jobDir = resolveCoverLetterJobDir(companyName, roleName);
     saveJobFile(jobDir, 'cover-letter.json', JSON.stringify(coverLetterJSON, null, 2));
     writeSessionInfo(jobDir, { sessionId, model: modelSelect });
 
@@ -394,13 +410,9 @@ router.post('/coverLetter', async (req, res) => {
 
     const effectiveCoverOutput = resolveCoverOutput(coverOutput);
     const coverUrls = await writeCoverLetterArtifacts(jobDir, coverLetterJSON, latexSource, effectiveCoverOutput);
-    const slug = path.basename(jobDir);
-    const validatedPermalink = validatePermalinkUrl(permalinkUrl, slug);
-    if (validatedPermalink) {
-      try { writePermalinkTxt(jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
-    }
     res.json({
       sessionId,
+      jobDir: slug,
       ...(coverUrls.coverPdfUrl ? { pdfUrl: coverUrls.coverPdfUrl } : {}),
       ...(coverUrls.coverTxtUrl ? { txtUrl: coverUrls.coverTxtUrl } : {}),
     });

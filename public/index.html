@@ -524,6 +524,7 @@
         modelSelect: document.getElementById('model-select')?.value,
         useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
         resumeType: document.getElementById('resumeType').value,
+        permalinkBaseUrl: window.location.origin + window.location.pathname,
         force,
       });
 
@@ -556,6 +557,12 @@
 
         if (!res.ok) {
           throw new Error(data.error || `Server error ${res.status}`);
+        }
+
+        if (data.jobDir) {
+          lastJobDir = data.jobDir;
+          setPermalinkHash(data.jobDir);
+          renderResultBlock(data.jobDir, 'generate');
         }
 
         // Wait for background task to complete
@@ -662,10 +669,17 @@
             modelSelect,
             useStarMethodForGovtRoles,
             folderPath,
+            permalinkBaseUrl: window.location.origin + window.location.pathname,
           }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error');
+        const coverJobDir = data.jobDir || lastJobDir;
+        if (coverJobDir) {
+          lastJobDir = coverJobDir;
+          setPermalinkHash(coverJobDir);
+          renderResultBlock(coverJobDir, 'generate');
+        }
         playSuccessSound();
         if (data.pdfUrl) {
           window.open(data.pdfUrl, '_blank');
@@ -673,16 +687,6 @@
           window.open(data.txtUrl, '_blank');
         } else {
           alert('Cover letter generated (no PDF).');
-        }
-        // If the cover letter is for the most recent jobDir, write permalink.txt
-        if (lastJobDir) {
-          fetch('/generate/permalink', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slug: lastJobDir, permalinkUrl: buildPermalink(lastJobDir) }),
-          }).catch(() => { /* fire-and-forget */ });
-          setPermalinkHash(lastJobDir);
-          renderResultBlock(lastJobDir, 'generate');
         }
       } catch (err) {
         playFailureSound();
