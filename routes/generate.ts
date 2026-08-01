@@ -17,7 +17,6 @@ import {
   type SearchMode,
 } from '../services/jobDescriptionSearch';
 import { applySuggestions, AttachedFile, NoOpResultError } from '../services/fixSuggestionsService';
-import { ensureRedactedResumeFile, loadRedactedResumeFromDir } from '../services/redactResume';
 import { unifiedDiffText, summariseJsonDiff, generateInlineDiff } from '../services/diffUtil';
 import { latestBackupVersion, listBackupVersions, listJobDirs, BackupResult } from '../services/backupService';
 import { loadOtherInputFromDir, loadFullJdFromDir, loadJobDescriptionFromDir, resolveJobFolder } from '../services/jobDir';
@@ -769,7 +768,6 @@ type ApplySuggestionsServiceInput = {
   userSuggestions: string;
   attachedFiles: AttachedFile[];
   resumePath: string;
-  redactedResumePath: string;
   modelSelect?: string;
 };
 
@@ -790,7 +788,7 @@ function requireDir(label: string, dirPath: string): ValidationFailure | null {
   return { ok: false, status: 404, error: `${label} not found` };
 }
 
-function validateApplySuggestionsRequest(body: ApplySuggestionsRequestBody): ValidationFailure | ValidationSuccess<{ jobDir: string; resumePath: string; redactedResumePath: string; userSuggestions: string; modelSelect?: string; rawAttached: string[] }> {
+function validateApplySuggestionsRequest(body: ApplySuggestionsRequestBody): ValidationFailure | ValidationSuccess<{ jobDir: string; resumePath: string; userSuggestions: string; modelSelect?: string; rawAttached: string[] }> {
   const slug = body.jobDir;
   if (!slug) return { ok: false, status: 400, error: 'jobDir is required' };
   const jobDir = resolveJobDir(slug);
@@ -801,15 +799,11 @@ function validateApplySuggestionsRequest(body: ApplySuggestionsRequestBody): Val
   const resumePath = path.join(jobDir, 'structured-output.json');
   const resumeFailure = requireExists('structured-output.json', resumePath, 'structured-output.json not found in this job folder');
   if (resumeFailure) return resumeFailure;
-  const redactedResumePath = path.join(jobDir, 'structured-output-redacted.json');
-  const redactedFailure = requireExists('structured-output-redacted.json', redactedResumePath, 'structured-output-redacted.json not found — call POST /generate/ensureRedactedResume first');
-  if (redactedFailure) return redactedFailure;
   return {
     ok: true,
     value: {
       jobDir,
       resumePath,
-      redactedResumePath,
       userSuggestions,
       modelSelect: body.modelSelect,
       rawAttached: Array.isArray(body.attachedFilePaths) ? body.attachedFilePaths : [],
@@ -905,56 +899,6 @@ function listBackupsHandler(req: Request, res: import('express').Response): void
 
 router.get('/listJobDirs', listJobDirsHandler);
 router.get('/listBackups', listBackupsHandler);
-
-function ensureRedactedResumeForJob(req: Request, res: import('express').Response): void {
-  const validated = validateEnsureRedactedResumeRequest(req.body);
-  if (isFailure(validated)) {
-    res.status(validated.status).json({ error: validated.error });
-    return;
-  }
-  try {
-    const source = JSON.parse(fs.readFileSync(validated.value.resumePath, 'utf8')) as ResumeData;
-    const result = ensureRedactedResumeFile(validated.value.jobDir, source);
-    res.json({ path: result.path, wroteFile: result.wroteFile });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to ensure redacted resume';
-    logError('ensureRedactedResume error:', err);
-    res.status(500).json({ error: message });
-  }
-}
-
-function validateEnsureRedactedResumeRequest(body: unknown): ValidationFailure | ValidationSuccess<{ jobDir: string; resumePath: string }> {
-  const slug = typeof (body as { jobDir?: unknown })?.jobDir === 'string' ? (body as { jobDir: string }).jobDir : '';
-  if (!slug) return { ok: false, status: 400, error: 'jobDir is required' };
-  const jobDir = resolveJobDir(slug);
-  const dirFailure = requireDir('Job directory', jobDir);
-  if (dirFailure) return dirFailure;
-  const resumePath = path.join(jobDir, 'structured-output.json');
-  const resumeFailure = requireExists('structured-output.json', resumePath, 'structured-output.json not found in this job folder');
-  if (resumeFailure) return resumeFailure;
-  return { ok: true, value: { jobDir, resumePath } };
-}
-
-router.post('/ensureRedactedResume', ensureRedactedResumeForJob);
-
-router.get('/redactedResumePath', (req, res) => {
-  const slug = typeof req.query.jobDir === 'string' ? req.query.jobDir : '';
-  if (!slug) {
-    res.status(400).json({ error: 'jobDir is required' });
-    return;
-  }
-  const jobDir = resolveJobDir(slug);
-  if (!fs.existsSync(jobDir) || !fs.statSync(jobDir).isDirectory()) {
-    res.status(404).json({ error: 'Job directory not found' });
-    return;
-  }
-  const existing = loadRedactedResumeFromDir(jobDir);
-  if (existing) {
-    res.json({ path: path.join(jobDir, 'structured-output-redacted.json'), exists: true });
-    return;
-  }
-  res.json({ path: null, exists: false });
-});
 
 type DiffResumeFormat = 'unified' | 'summary' | 'both' | 'word-diff';
 
@@ -1101,7 +1045,6 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
         userSuggestions: input.userSuggestions,
         attachedFiles: input.attachedFiles,
         resumePath: input.resumePath,
-        redactedResumePath: input.redactedResumePath,
         modelSelect: input.modelSelect,
       });
       taskMap.set(taskId, {
@@ -1159,7 +1102,6 @@ router.post('/applySuggestions', (req, res) => {
     userSuggestions: validated.value.userSuggestions,
     attachedFiles: attachedCheck.value,
     resumePath: validated.value.resumePath,
-    redactedResumePath: validated.value.redactedResumePath,
     modelSelect: validated.value.modelSelect,
   });
 });
@@ -1296,13 +1238,6 @@ function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { u
         return;
       }
 
-      // Ensure structured-output-redacted.json exists (required by applySuggestions in step 3)
-      try {
-        const { ensureRedactedResumeFile } = await import('../services/redactResume.js');
-        const freshResume = JSON.parse(fs.readFileSync(path.join(jobDir.jobDir, 'structured-output.json'), 'utf8'));
-        ensureRedactedResumeFile(jobDir.jobDir, freshResume);
-      } catch (e) { logError('AutoChain: failed to ensure redacted resume (non-fatal):', e); }
-
       // Step 2 — initial ATS analysis (read JD + keywords from freshly generated files)
       taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 2, stepLabel: STEP_LABELS[2] });
       let initialAtsCoverage: number | undefined;
@@ -1342,7 +1277,6 @@ function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { u
           userSuggestions: input.userSuggestions,
           attachedFiles,
           resumePath: path.join(jobDir.jobDir, 'structured-output.json'),
-          redactedResumePath: path.join(jobDir.jobDir, 'structured-output-redacted.json'),
           modelSelect: input.modelSelect,
         });
         const applyBuilt = buildApplySuggestionsResult(applyResult);

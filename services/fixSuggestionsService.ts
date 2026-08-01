@@ -6,7 +6,6 @@ import { buildLatex } from './latex';
 import { compilePDF } from './compiler';
 import { createVersionedBackup, BackupResult } from './backupService';
 import { resumesAreEqual } from './diffUtil';
-import { ensureRedactedResumeFile } from './redactResume';
 import { log, logError } from './logger';
 
 export type AttachedFile = { name: string; path: string };
@@ -16,7 +15,6 @@ export interface ApplySuggestionsInput {
   userSuggestions: string;
   attachedFiles: AttachedFile[];
   resumePath: string;
-  redactedResumePath: string;
   modelSelect?: string;
   promptLogDir?: string;
 }
@@ -37,11 +35,9 @@ export class NoOpResultError extends Error {
   }
 }
 
-const REDACTED_FILE_NAME = 'structured-output-redacted.json';
 const RESUME_FILE_NAME = 'structured-output.json';
 const ATTACHED_FILE_MAX_BYTES = 200_000;
 const DEFAULT_MODEL = 'opencode-go/minimax-m3';
-const RESERVED_FILE_NAMES = new Set([REDACTED_FILE_NAME, RESUME_FILE_NAME]);
 
 const ATTACH_ORDER = ['job-description.txt', 'full-jd.txt', 'other-input.txt', 'ats-analysis.md'];
 
@@ -70,7 +66,6 @@ function requireExists(label: string, filePath: string): void {
 function validateInput(input: ApplySuggestionsInput): void {
   requireExists('jobDir', input.jobDir);
   requireExists('resumePath', input.resumePath);
-  requireExists('redactedResumePath', input.redactedResumePath);
   if (!input.userSuggestions?.trim()) {
     throw new Error('userSuggestions is required');
   }
@@ -102,7 +97,7 @@ function appendOrderedAttachedBlocks(blocks: string[], fileContents: Map<string,
 
 function appendRemainingAttachedBlocks(blocks: string[], fileContents: Map<string, string>, excluded: Set<string>): void {
   for (const [name, content] of fileContents.entries()) {
-    if (excluded.has(name) || RESERVED_FILE_NAMES.has(name)) continue;
+    if (excluded.has(name) || name === RESUME_FILE_NAME) continue;
     appendAttachedBlock(blocks, name, content);
   }
 }
@@ -112,9 +107,8 @@ function buildUserContent(input: ApplySuggestionsInput, fileContents: Map<string
   appendAttachedBlock(blocks, 'USER SUGGESTIONS', input.userSuggestions.trim());
   const included = appendOrderedAttachedBlocks(blocks, fileContents);
   appendRemainingAttachedBlocks(blocks, fileContents, included);
-  blocks.push(`REDACTED RESUME (read this; PII already stripped): ${input.redactedResumePath}`);
   blocks.push(`REAL RESUME FILE TO EDIT IN PLACE: ${input.resumePath}`);
-  blocks.push('Preserve every PII field (name, phone, email, linkedinUrl, linkedinDisplay) and the full education array. Only change the sections the user asked about.');
+  blocks.push('Preserve every PII field (name, phone, email, linkedinUrl, linkedinDisplay, githubUrl, githubDisplay) and the full education array. Only change the sections the user asked about.');
   return blocks.join('\n');
 }
 
@@ -193,14 +187,6 @@ async function writeOutputs(jobDir: string, resume: ResumeData): Promise<void> {
   fs.writeFileSync(path.join(jobDir, 'resume.pdf'), pdfBuffer);
 }
 
-function refreshRedactedResume(jobDir: string, resume: ResumeData): void {
-  try {
-    ensureRedactedResumeFile(jobDir, resume);
-  } catch (err) {
-    logError('applySuggestions: failed to regenerate structured-output-redacted.json (will heal on next call):', err);
-  }
-}
-
 export async function applySuggestions(input: ApplySuggestionsInput): Promise<ApplySuggestionsResult> {
   validateInput(input);
 
@@ -227,7 +213,6 @@ export async function applySuggestions(input: ApplySuggestionsInput): Promise<Ap
   }
 
   await writeOutputs(input.jobDir, outcome.newResume);
-  refreshRedactedResume(input.jobDir, outcome.newResume);
 
   return {
     resume: outcome.newResume,

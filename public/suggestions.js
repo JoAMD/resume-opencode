@@ -8,9 +8,7 @@ const DEFAULT_AUTO_ATTACH = [
   'ats-analysis.md',
   'job-description.txt',
   'other-input.txt',
-  'structured-output-redacted.json',
 ];
-const REDACTED_RESUME_NAME = 'structured-output-redacted.json';
 const POLL_INTERVAL_MS = 5000;
 const MAX_SUGGESTIONS_LENGTH = 4000;
 const SLUG_WATCH_INTERVAL_MS = 1000;
@@ -134,28 +132,7 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
     for (const name of DEFAULT_AUTO_ATTACH) {
       if (pills.querySelector(`.pill[data-file-name="${CSS.escape(name)}"]`)) continue;
       const pill = createPill(name, true);
-      if (name === REDACTED_RESUME_NAME) {
-        pill.title = 'PII-stripped copy of structured-output.json — always sent to the model so it never sees your real name/email/phone';
-      }
       pills.appendChild(pill);
-    }
-  }
-
-  async function ensureRedactedResumeForCurrentJob() {
-    const slug = getJobSlug();
-    if (!slug) return;
-    try {
-      const res = await fetch('/generate/ensureRedactedResume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobDir: slug }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        console.warn('ensureRedactedResume failed:', data.error || res.status);
-      }
-    } catch (err) {
-      console.warn('ensureRedactedResume network error:', err);
     }
   }
 
@@ -166,7 +143,6 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       slugNode.textContent = slug;
       section.classList.remove('hidden');
       autoAttachDefaults();
-      ensureRedactedResumeForCurrentJob();
     } else if (!slug) {
       slugNode.textContent = '(none — generate a resume first)';
       section.classList.add('hidden');

@@ -61,11 +61,12 @@ Two flavours of coverage check, both routed through the same per-model AI queue:
 
 ### PII redaction for AI ATS calls
 
-The AI ATS analyser is the only AI call that sees a representation of the user's full resume. To prevent leaking PII to the model, the redacted payload is constructed separately from the on-disk resume:
+The AI ATS analyser is sent a PII-stripped copy of the resume; the **Apply suggestions** flow reads the on-disk resume directly (it must, in order to preserve PII byte-identical when rewriting). To keep the ATS call private:
 
 - `services/redactResume.ts` strips seven PII fields (`name`, `phone`, `email`, `linkedinUrl`, `linkedinDisplay`, `githubUrl`, `githubDisplay`) and persists `structured-output-redacted.json` next to the on-disk resume.
 - A pre-call guard refuses to send the payload if any PII field is non-empty after redaction.
 - The keyword list itself is the only other model input — no full JD or personal details are sent unless the user includes them in the JD text, which is sanitised first.
+- Apply suggestions does **not** see the redacted file; its prompt (`prompts/fix-suggestions-prompt.txt`) tells the model to read the real `structured-output.json` and to leave PII fields byte-identical when making changes. If you do not want the model to see your real PII, do not use Apply suggestions.
 
 ### Resume page-limit enforcement
 

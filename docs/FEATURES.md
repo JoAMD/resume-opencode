@@ -89,13 +89,18 @@ understand the current surface without reading the source or the git log.
 
 ## PII redaction (for AI ATS analysis)
 
+The PII-stripped payload protects the **AI ATS analyser** only. The Apply
+suggestions flow reads the on-disk resume directly and is covered by a
+[privacy note in its own section](#apply-suggestions-to-an-existing-resume).
+
 - `services/redactResume.ts` strips seven PII fields (`name`, `phone`, `email`,
   `linkedinUrl`, `linkedinDisplay`, `githubUrl`, `githubDisplay`) from the
   resume before it is sent to the AI ATS analyser.
 - A pre-call guard refuses the call if any PII field is non-empty after
   redaction.
 - Persists `structured-output-redacted.json` next to the on-disk resume so the
-  redacted payload is reproducible and inspectable.
+  redacted payload is reproducible and inspectable. The file is still written
+  for ATS use; apply-suggestions ignores it.
 
 ## Job applications tracking
 
@@ -183,6 +188,14 @@ A second-generation edit flow. After a resume is generated and stored in
 `jobs/<slug>/structured-output.json`, the user can attach files from that
 folder, write free-text suggestions, and have the model revise the resume
 JSON in place. The cover letter is **not** touched by this flow.
+
+> **Privacy note:** Apply suggestions reads the on-disk `structured-output.json`
+> directly — it does **not** use the PII-redacted copy (`structured-output-redacted.json`).
+> The model will see your real name, phone, email, LinkedIn, and GitHub. The
+> system prompt instructs it to leave PII fields byte-identical when making
+> changes. If you do not want the model to see your real PII, do not use this
+> flow. (The PII redaction in `services/redactResume.ts` is still in effect
+> for the AI ATS analyser — see [PII redaction](#pii-redaction-for-ai-ats-analysis).)
 
 - **UI** — a new panel below the existing buttons in `public/index.html`,
   implemented as a self-contained ES module in `public/suggestions.js` that
