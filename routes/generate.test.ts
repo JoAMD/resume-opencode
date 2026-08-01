@@ -66,12 +66,13 @@ vi.mock('../services/env', () => ({
   normalizeEnvProfile: () => ({}),
 }));
 
+const analyzeATSKeywordsAgainstResumeMock = vi.fn(() => ({ coveragePercent: 0, includedInResume: [], missingFromResume: [], extractedFromJD: [] }));
 vi.mock('../services/ai', () => ({
   generateResumeJSON: vi.fn(),
   generateCoverLetterJSON: vi.fn(),
   generateCombinedJSON: vi.fn(),
   normaliseBodyParagraph: (v: any) => (Array.isArray(v) ? v : (typeof v === 'string' ? v.split(/\n\s*\n+/) : [])),
-  analyzeATSKeywordsAgainstResume: () => ({ coveragePercent: 0, includedInResume: [], missingFromResume: [], extractedFromJD: [] }),
+  analyzeATSKeywordsAgainstResume: () => analyzeATSKeywordsAgainstResumeMock(),
   extractATSKeywordsFromJDViaAI: async () => [],
 }));
 
@@ -82,6 +83,13 @@ vi.mock('../services/fixSuggestionsService', () => ({
     code = 'no-op';
     constructor(public backup: unknown) { super('no-op'); }
   },
+}));
+
+const runAtsAiAnalysisMock: Mock = vi.fn();
+const buildAtsAnalysisMarkdownMock: Mock = vi.fn(() => '# ATS analysis (mock)');
+vi.mock('../services/atsAiService', () => ({
+  runAtsAiAnalysis: (...args: unknown[]) => runAtsAiAnalysisMock(...args),
+  buildAtsAnalysisMarkdown: (...args: unknown[]) => buildAtsAnalysisMarkdownMock(...args),
 }));
 
 const latestBackupVersionMock = vi.fn();
@@ -288,6 +296,11 @@ describe('POST /generate/applySuggestions', () => {
     realpathSync.mockReset();
     realpathSync.mockImplementation((p: string) => p);
     applySuggestionsMock.mockReset();
+    runAtsAiAnalysisMock.mockReset();
+    buildAtsAnalysisMarkdownMock.mockReset();
+    buildAtsAnalysisMarkdownMock.mockReturnValue('# ATS analysis (mock)');
+    analyzeATSKeywordsAgainstResumeMock.mockReset();
+    analyzeATSKeywordsAgainstResumeMock.mockReturnValue({ coveragePercent: 0, includedInResume: [], missingFromResume: [], extractedFromJD: [] });
   });
 
   it('returns 400 when jobDir is missing', async () => {
@@ -392,7 +405,7 @@ describe('POST /generate/applySuggestions', () => {
     expect(poll.body.result.sessionId).toBe('ses_apply_bare');
   });
 
-  it('resolves to error+no-op when the service throws NoOpResultError', async () => {
+  it('resolves to error+no-op when the service throws NoOpResultError (and skips post-apply ATS)', async () => {
     stubShopifySweExists();
 
     const { NoOpResultError } = await import('../services/fixSuggestionsService.js');
@@ -401,11 +414,116 @@ describe('POST /generate/applySuggestions', () => {
     const { default: router } = await import('./generate.js');
     const post = await invokeRoute(router, 'post', '/applySuggestions', { jobDir: 'shopify-swe', userSuggestions: 'change stuff' });
     expect(post.status).toBe(200);
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 200));
     const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
     expect(poll.body.status).toBe('error');
     expect(poll.body.error).toBe('no-op');
     expect(poll.body.result.backupPath).toContain('backups/v1');
+    expect(poll.body.atsStatus).toBe('skipped');
+    expect(poll.body.atsAnalysis).toBeNull();
+    expect(runAtsAiAnalysisMock).not.toHaveBeenCalled();
+  });
+
+  it('runs post-apply ATS analysis and exposes it in the task result on success', async () => {
+    stubShopifySweExists([`${baseJobDir}/ats-analysis.md`, `${baseJobDir}/ats-analysis.json`]);
+
+    readFileSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s === `${baseJobDir}/structured-output.json`) {
+        return JSON.stringify({ name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] });
+      }
+      if (s === `${baseJobDir}/ats-analysis.json`) {
+        return JSON.stringify({ keywords: ['react', 'node'] });
+      }
+      return '';
+    });
+
+    applySuggestionsMock.mockResolvedValue({
+      resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
+      pdfUrl: '/jobs/shopify-swe/resume.pdf',
+      sessionId: 'ses_apply_ats_ok',
+      backup: { version: 1, backupDir: `${baseJobDir}/backups/v1`, files: [] },
+    });
+
+    runAtsAiAnalysisMock.mockResolvedValue({
+      analysis: {
+        coveragePercent: 78,
+        includedInResume: ['react'],
+        missingFromResume: ['kubernetes'],
+        strengths: [],
+        gaps: [],
+        recommendations: [],
+        summaryMarkdown: '',
+        extractedFromJD: ['react', 'kubernetes'],
+        keywords: ['react', 'kubernetes'],
+        source: 'ai',
+      },
+      source: 'ai',
+      modelUsed: 'mock-model',
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'tighten summary',
+      attachedFilePaths: [`${baseJobDir}/ats-analysis.md`],
+    });
+    expect(post.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.body.status).toBe('complete');
+    expect(poll.body.atsStatus).toBe('complete');
+    expect(poll.body.atsAnalysis).toEqual({
+      coveragePercent: 78,
+      missingFromResume: ['kubernetes'],
+      includedInResume: ['react'],
+      source: 'ai',
+    });
+    expect(runAtsAiAnalysisMock).toHaveBeenCalledTimes(1);
+    const atsJsonWrite = writeFileSync.mock.calls.find((c) => String(c[0]).endsWith('ats-analysis.json'));
+    const atsMdWrite = writeFileSync.mock.calls.find((c) => String(c[0]).endsWith('ats-analysis.md'));
+    expect(atsJsonWrite).toBeDefined();
+    expect(atsMdWrite).toBeDefined();
+    expect(atsMdWrite![1]).toBe('# ATS analysis (mock)');
+  });
+
+  it('marks post-apply ATS as failed when the analysis throws, but apply still completes', async () => {
+    stubShopifySweExists([`${baseJobDir}/ats-analysis.md`]);
+
+    readFileSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s === `${baseJobDir}/structured-output.json`) {
+        return JSON.stringify({ name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] });
+      }
+      return '';
+    });
+
+    applySuggestionsMock.mockResolvedValue({
+      resume: { name: 'X', summary: 'y', skills: {}, experience: [], education: [], projects: [] },
+      pdfUrl: '/jobs/shopify-swe/resume.pdf',
+      sessionId: 'ses_apply_ats_fail',
+      backup: { version: 1, backupDir: `${baseJobDir}/backups/v1`, files: [] },
+    });
+
+    runAtsAiAnalysisMock.mockRejectedValue(new Error('AI is down'));
+
+    analyzeATSKeywordsAgainstResumeMock.mockImplementationOnce(() => {
+      throw new Error('regex is down too');
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/applySuggestions', {
+      jobDir: 'shopify-swe',
+      userSuggestions: 'tighten summary',
+      attachedFilePaths: [`${baseJobDir}/ats-analysis.md`],
+    });
+    expect(post.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.body.status).toBe('complete');
+    expect(poll.body.atsStatus).toBe('failed');
+    expect(poll.body.atsAnalysis).toBeNull();
+    expect(poll.body.result.pdfUrl).toBe('/jobs/shopify-swe/resume.pdf');
   });
 });
 

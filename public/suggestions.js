@@ -504,7 +504,17 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       backupPath: r.backupPath,
       backupVersion: r.backupVersion,
     });
-    setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
+    if (task.atsStatus === 'complete' && task.atsAnalysis) {
+      const a = task.atsAnalysis;
+      const missing = (a.missingFromResume || []).slice(0, 10).join(', ')
+        + ((a.missingFromResume || []).length > 10 ? '...' : '');
+      alert(`ATS Coverage: ${a.coveragePercent}%\n\nMissing keywords: ${missing || 'none'}`);
+      setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
+    } else if (task.atsStatus === 'failed') {
+      setStatus(statusNode, 'Done. Post-apply ATS analysis failed.', 'success');
+    } else {
+      setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
+    }
     playSound('success');
   }
 
@@ -563,6 +573,12 @@ function initSuggestionsPanel({ tplContent, popover, diffModal }) {
       backupPath: taskResult.backupPath,
       backupVersion: taskResult.backupVersion,
     });
+    if (taskResult.atsStatus === 'complete' && taskResult.atsAnalysis) {
+      const a = taskResult.atsAnalysis;
+      const missing = (a.missingFromResume || []).slice(0, 10).join(', ')
+        + ((a.missingFromResume || []).length > 10 ? '...' : '');
+      alert(`ATS Coverage: ${a.coveragePercent}%\n\nMissing keywords: ${missing || 'none'}`);
+    }
     setStatus(statusNode, 'Done. The updated PDF is ready.', 'success');
     playSound('success');
   });

@@ -248,6 +248,17 @@ JSON in place. The cover letter is **not** touched by this flow.
   no-op-after-retry, the task resolves to `status: 'error'` with
   `error: 'no-op'` and `result: { backupPath, backupVersion }` so the UI
   can recover.
+- **Post-apply ATS analysis** — after a successful (non-no-op) apply, the
+  server runs ATS analysis on the new resume and returns it in the same
+  task response (`atsAnalysis` + `atsStatus`). Reuses the same
+  `runAtsAiAnalysis` + regex-fallback path as the standalone
+  `Run ATS Analysis` button and the `autoChain` step 4. The UI surfaces
+  coverage in an `alert()` with the same shape as the standalone button.
+  `atsStatus` is `'complete'` on success, `'failed'` if the analysis
+  throws (apply still succeeds), and `'skipped'` on a no-op. This brings
+  the manual apply button into parity with `autoChain` step 4 and the
+  standalone button — every code path that produces a resume now also
+  produces a fresh ATS analysis.
 - **Input priority (user suggestions > ATS analysis)** — when the user
   attached `ats-analysis.md`, the system prompt (`prompts/fix-suggestions-prompt.txt`)
   instructs the model that the user's free-text suggestions always take

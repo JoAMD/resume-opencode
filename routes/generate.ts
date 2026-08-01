@@ -57,6 +57,13 @@ let lastGeneratedTexPath: string | null = null;
 let lastGeneratedCoverLetterJSON: CoverLetterJSON | null = null;
 
 type TaskStatus = 'pending' | 'complete' | 'error';
+type AtsStatus = 'complete' | 'failed' | 'skipped';
+type AtsAnalysisPayload = {
+  coveragePercent: number;
+  missingFromResume: string[];
+  includedInResume: string[];
+  source: 'ai' | 'regex';
+} | null;
 type TaskResult = {
   status: TaskStatus;
   result?: any;
@@ -65,6 +72,8 @@ type TaskResult = {
   coverLetterSessionId?: string;
   step?: number;
   stepLabel?: string;
+  atsAnalysis?: AtsAnalysisPayload;
+  atsStatus?: AtsStatus;
 };
 
 const STEP_LABELS: Record<number, string> = {
@@ -279,6 +288,8 @@ router.get('/task/:taskId', (req, res) => {
     coverLetterSessionId: task.coverLetterSessionId,
     step: task.step,
     stepLabel: task.stepLabel,
+    atsAnalysis: task.atsAnalysis,
+    atsStatus: task.atsStatus,
   });
 });
 
@@ -1047,6 +1058,12 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
         resumePath: input.resumePath,
         modelSelect: input.modelSelect,
       });
+
+      const { atsAnalysis } = await runPostApplyAtsAnalysis({
+        jobDir: input.jobDir,
+        modelSelect: input.modelSelect,
+      });
+
       taskMap.set(taskId, {
         status: 'complete',
         startedAt: Date.now(),
@@ -1054,6 +1071,8 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
         result: buildApplySuggestionsResult(result),
         step: 3,
         stepLabel: STEP_LABELS[3],
+        atsAnalysis,
+        atsStatus: atsAnalysis ? 'complete' : 'failed',
       });
     } catch (err) {
       if (err instanceof NoOpResultError) {
@@ -1065,6 +1084,8 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
           result: { backupPath: err.backup.backupDir, backupVersion: err.backup.version },
           step: 3,
           stepLabel: STEP_LABELS[3],
+          atsAnalysis: null,
+          atsStatus: 'skipped',
         });
         return;
       }
@@ -1073,6 +1094,72 @@ function runApplySuggestionsBackground(taskId: string, input: ApplySuggestionsSe
       taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 3, stepLabel: STEP_LABELS[3] });
     }
   })();
+}
+
+function readJsonIfExists(filePath: string): any {
+  if (!fs.existsSync(filePath)) return null;
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { return null; }
+}
+
+async function runPostApplyAtsAnalysis(input: { jobDir: string; modelSelect?: string }): Promise<{ atsAnalysis: AtsAnalysisPayload; atsSource: 'ai' | 'regex' | null }> {
+  try {
+    const resumeJSON = readJsonIfExists(path.join(input.jobDir, 'structured-output.json')) as import('../services/types').ResumeData | null;
+    if (!resumeJSON) {
+      logError('Post-apply ATS: structured-output.json missing or unreadable at', path.join(input.jobDir, 'structured-output.json'));
+      return { atsAnalysis: null, atsSource: null };
+    }
+
+    const priorAts = readJsonIfExists(path.join(input.jobDir, 'ats-analysis.json'));
+    const atsKeywords: string[] = priorAts?.keywords || [];
+
+    const { analysis, source } = await runPostApplyAtsCall({
+      resume: resumeJSON,
+      atsKeywords,
+      jobDir: input.jobDir,
+      modelSelect: input.modelSelect,
+    });
+
+    const { buildAtsAnalysisMarkdown } = await import('../services/atsAiService.js');
+    saveJobFile(input.jobDir, 'ats-analysis.json', JSON.stringify(analysis, null, 2));
+    saveJobFile(input.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(analysis));
+
+    return {
+      atsAnalysis: {
+        coveragePercent: analysis.coveragePercent,
+        missingFromResume: analysis.missingFromResume || [],
+        includedInResume: analysis.includedInResume || [],
+        source,
+      },
+      atsSource: source,
+    };
+  } catch (err) {
+    logError('Post-apply ATS analysis failed:', err);
+    return { atsAnalysis: null, atsSource: null };
+  }
+}
+
+async function runPostApplyAtsCall(input: {
+  resume: import('../services/types').ResumeData;
+  atsKeywords: string[];
+  jobDir: string;
+  modelSelect?: string;
+}): Promise<{ analysis: import('../services/types').ATSAnalysisResult; source: 'ai' | 'regex' }> {
+  try {
+    const { runAtsAiAnalysis } = await import('../services/atsAiService.js');
+    const outcome = await runAtsAiAnalysis({
+      jobDescription: '',
+      resume: input.resume,
+      jdKeywords: input.atsKeywords,
+      jobDir: input.jobDir,
+      modelOverride: input.modelSelect,
+    });
+    return { analysis: outcome.analysis, source: outcome.source };
+  } catch (aiErr) {
+    logError('Post-apply ATS AI error, falling back to regex:', aiErr);
+    const { analyzeATSKeywordsAgainstResume } = await import('../services/ai.js');
+    const fallback = analyzeATSKeywordsAgainstResume(input.atsKeywords, input.resume);
+    return { analysis: { ...fallback, source: 'regex' as const }, source: 'regex' as const };
+  }
 }
 
 router.post('/applySuggestions', (req, res) => {
