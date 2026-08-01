@@ -1156,6 +1156,7 @@ type RunAtsBackgroundInput = {
   jobDir: string;
   atsKeywords?: string[];
   resumeJSON?: import('../services/types').ResumeData | null;
+  step?: number;
 };
 
 function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
@@ -1203,17 +1204,19 @@ function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
         saveJobFile(input.jobDir, 'ats-analysis.json', JSON.stringify(atsAnalysis, null, 2));
         saveJobFile(input.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(atsAnalysis));
       }
+      const step = input.step ?? 4;
       taskMap.set(taskId, {
         status: 'complete',
         startedAt: Date.now(),
         result: { coveragePercent },
-        step: 4,
-        stepLabel: STEP_LABELS[4],
+        step,
+        stepLabel: STEP_LABELS[step],
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Internal server error';
+      const step = input.step ?? 4;
       logError('ats background error:', err);
-      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step, stepLabel: STEP_LABELS[step] });
     }
   })();
 }
@@ -1232,6 +1235,213 @@ router.post('/runAtsBackground', (req, res) => {
   taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
   res.json({ taskId });
   runAtsBackground(taskId, { jobDir, atsKeywords: atsKeywords || [], resumeJSON: resumeJSON || null });
+});
+
+function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { userSuggestions: string }): void {
+  (async () => {
+    try {
+      const jobDir = createJobDir(input.companyName!, input.roleName!, input.modelSelect);
+      const options = buildGenerationOptions(input, jobDir.jobDir);
+
+      saveJobFile(jobDir.jobDir, 'job-description.txt', input.jobDescription ?? '');
+      if (input.fullJD && input.fullJD.trim()) {
+        saveJobFile(jobDir.jobDir, 'full-jd.txt', input.fullJD);
+      }
+      saveJobFile(jobDir.jobDir, 'other-input.txt', formatOtherInput(input));
+      if (input.link?.trim()) {
+        writeLinkToJobDir(jobDir.jobDir, input.link.trim());
+      }
+
+      // Step 1 — generate resume + cover letter
+      taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
+      let genResult;
+      try {
+        genResult = await executeGeneration(jobDir, options, {
+          jobDescription: input.jobDescription,
+          companyName: input.companyName,
+          roleName: input.roleName,
+          extraNotes: input.extraNotes,
+          coverOutput: input.coverOutput,
+          useCombinedGeneration: input.useCombinedGeneration,
+        });
+        const validatedPermalink = validatePermalinkUrl(input.permalinkUrl, jobDir.slug);
+        if (validatedPermalink) {
+          try { writePermalinkTxt(jobDir.jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
+        }
+        taskMap.set(taskId, {
+          status: 'complete',
+          result: genResult.result,
+          startedAt: Date.now(),
+          sessionId: genResult.sessionId,
+          coverLetterSessionId: genResult.coverLetterSessionId,
+          step: 1,
+          stepLabel: STEP_LABELS[1],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Internal server error';
+        logError('AutoChain step 1 error:', err);
+        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
+        return;
+      }
+
+      // Ensure structured-output-redacted.json exists (required by applySuggestions in step 3)
+      try {
+        const { ensureRedactedResumeFile } = await import('../services/redactResume.js');
+        const freshResume = JSON.parse(fs.readFileSync(path.join(jobDir.jobDir, 'structured-output.json'), 'utf8'));
+        ensureRedactedResumeFile(jobDir.jobDir, freshResume);
+      } catch (e) { logError('AutoChain: failed to ensure redacted resume (non-fatal):', e); }
+
+      // Step 2 — initial ATS analysis (read JD + keywords from freshly generated files)
+      taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 2, stepLabel: STEP_LABELS[2] });
+      let initialAtsCoverage: number | undefined;
+      try {
+        const { runATSAnalysis } = await import('../services/atsService.js');
+        const outcome = await runATSAnalysis({ folderPath: jobDir.jobDir, modelSelect: input.modelSelect });
+        if (outcome.result) {
+          initialAtsCoverage = outcome.result.coveragePercent;
+        }
+        taskMap.set(taskId, {
+          status: 'complete',
+          result: { ...genResult.result, initialAtsCoverage },
+          startedAt: Date.now(),
+          sessionId: genResult.sessionId,
+          coverLetterSessionId: genResult.coverLetterSessionId,
+          step: 2,
+          stepLabel: STEP_LABELS[2],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Internal server error';
+        logError('AutoChain step 2 error:', err);
+        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 2, stepLabel: STEP_LABELS[2] });
+        return;
+      }
+
+      // Step 3 — apply suggestions
+      taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 3, stepLabel: STEP_LABELS[3] });
+      let applyResult;
+      try {
+        const preferredAutoAttach = ['structured-output.json', 'job-description.txt', 'ats-analysis.md', 'other-input.txt'];
+        const attachedFiles: AttachedFile[] = preferredAutoAttach
+          .filter((name) => fs.existsSync(path.join(jobDir.jobDir, name)))
+          .map((name) => ({ name, path: path.join(jobDir.jobDir, name) }));
+
+        applyResult = await applySuggestions({
+          jobDir: jobDir.jobDir,
+          userSuggestions: input.userSuggestions,
+          attachedFiles,
+          resumePath: path.join(jobDir.jobDir, 'structured-output.json'),
+          redactedResumePath: path.join(jobDir.jobDir, 'structured-output-redacted.json'),
+          modelSelect: input.modelSelect,
+        });
+        const applyBuilt = buildApplySuggestionsResult(applyResult);
+        taskMap.set(taskId, {
+          status: 'complete',
+          result: { ...genResult.result, ...applyBuilt, initialAtsCoverage },
+          startedAt: Date.now(),
+          sessionId: applyResult.sessionId,
+          step: 3,
+          stepLabel: STEP_LABELS[3],
+        });
+      } catch (err) {
+        if (err instanceof NoOpResultError) {
+          log('AutoChain step 3 no-op:', taskId, 'backup:', err.backup.backupDir);
+          taskMap.set(taskId, {
+            status: 'error',
+            error: 'no-op',
+            startedAt: Date.now(),
+            result: { ...genResult.result, backupPath: err.backup.backupDir, backupVersion: err.backup.version, initialAtsCoverage },
+            step: 3,
+            stepLabel: STEP_LABELS[3],
+          });
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Internal server error';
+        logError('AutoChain step 3 error:', err);
+        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 3, stepLabel: STEP_LABELS[3] });
+        return;
+      }
+
+      // Step 4 — final ATS analysis (inline for proper error propagation)
+      taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
+      try {
+        const { runAtsAiAnalysis, buildAtsAnalysisMarkdown } = await import('../services/atsAiService.js');
+        let resumeJSON: import('../services/types').ResumeData | null = null;
+        const structuredPath = path.join(jobDir.jobDir, 'structured-output.json');
+        if (fs.existsSync(structuredPath)) {
+          try { resumeJSON = JSON.parse(fs.readFileSync(structuredPath, 'utf8')); } catch (e) { /* ignore */ }
+        }
+        let atsKeywords: string[] = [];
+        const atsJsonPath = path.join(jobDir.jobDir, 'ats-analysis.json');
+        if (fs.existsSync(atsJsonPath)) {
+          try { const d = JSON.parse(fs.readFileSync(atsJsonPath, 'utf8')); atsKeywords = d.keywords || []; } catch (e) { /* ignore */ }
+        }
+        let coveragePercent: number;
+        try {
+          const outcome = await runAtsAiAnalysis({ jobDescription: '', resume: resumeJSON!, jdKeywords: atsKeywords, jobDir: jobDir.jobDir });
+          coveragePercent = outcome.analysis.coveragePercent;
+          saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(outcome.analysis, null, 2));
+          saveJobFile(jobDir.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(outcome.analysis));
+        } catch (aiErr) {
+          logError('AutoChain step 4 AI error, falling back to regex:', aiErr);
+          const fallback = analyzeATSKeywordsAgainstResume(atsKeywords, resumeJSON!);
+          coveragePercent = fallback.coveragePercent;
+          const atsAnalysis = { ...fallback, source: 'regex' as const };
+          saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(atsAnalysis, null, 2));
+          saveJobFile(jobDir.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(atsAnalysis));
+        }
+        taskMap.set(taskId, {
+          status: 'complete',
+          startedAt: Date.now(),
+          result: { ...taskMap.get(taskId)?.result, coveragePercent },
+          step: 4,
+          stepLabel: STEP_LABELS[4],
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Internal server error';
+        logError('AutoChain step 4 error:', err);
+        taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 4, stepLabel: STEP_LABELS[4] });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Internal server error';
+      logError('AutoChain error:', err);
+      taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
+    }
+  })();
+}
+
+router.post('/autoChain', (req, res) => {
+  const body = req.body as GenerateRequestBody & { userSuggestions?: string };
+  const { jobDescription, companyName, roleName, extraNotes, generateWithoutJD, coverOutput, lowTokenMode, useCombinedGeneration, modelSelect, modelPreference, useStarMethodForGovtRoles, resumeType, force, link } = body;
+
+  const validationError = validateGenerateRequest(body);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
+    return;
+  }
+  const userSuggestions = body.userSuggestions?.trim() || 'Review and improve this resume';
+
+  const conflict = duplicateConflictResponse(body);
+  if (conflict) {
+    res.status(409).json({
+      error: 'duplicate-application',
+      matchedBy: conflict.matchedBy,
+      partialMatch: conflict.partialMatch,
+      row: conflict.row,
+    });
+    return;
+  }
+
+  const taskId = createTaskId();
+  taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
+  res.json({ taskId });
+  runAutoChainBackground(taskId, {
+    jobDescription, companyName, roleName, extraNotes, generateWithoutJD,
+    coverOutput, lowTokenMode, useCombinedGeneration, modelSelect, modelPreference,
+    useStarMethodForGovtRoles, resumeType, force, link,
+    userSuggestions,
+    permalinkUrl: body.permalinkUrl,
+    fullJD: body.fullJD,
+  });
 });
 
 function validateGenerateRequest(body: GenerateRequestBody): string | null {

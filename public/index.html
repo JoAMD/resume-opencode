@@ -434,52 +434,32 @@
       }
     }
 
-    // Poll applySuggestions then fire ATS background
-    async function pollApplySuggestionsThenAts(applyTaskId, jobDir) {
+    // Poll autoChain task and update UI per step
+    async function pollAutoChain(chainTaskId, jobDir) {
       while (true) {
-        const res = await fetch(`/generate/task/${applyTaskId}`);
+        const res = await fetch(`/generate/task/${chainTaskId}`);
         const data = await res.json();
         if (data.status === 'complete') {
-          window.dispatchEvent(new CustomEvent('auto-apply-complete', {
-            detail: { taskResult: data.result },
-          }));
-          // Fire ATS background
-          fetch('/generate/runAtsBackground', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobDir, atsKeywords: [], resumeJSON: null }),
-          }).then(res => res.json()).then(atsData => {
-            if (atsData.taskId) {
-              recordTaskId(jobDir, atsData.taskId);
-              pollAtsCompletion(atsData.taskId);
+          // Dispatch auto-apply-complete with the apply result (step 3) if available
+          if (data.result && data.result.pdfUrl) {
+            window.dispatchEvent(new CustomEvent('auto-apply-complete', {
+              detail: { taskResult: data.result },
+            }));
+          }
+          // Show final ATS toast if coverage is available
+          const coverage = data.result && data.result.coveragePercent;
+          if (coverage !== undefined) {
+            const toast = document.getElementById('ats-toast');
+            if (toast) {
+              toast.textContent = `ATS analysis ready: ${coverage}% coverage`;
+              toast.classList.remove('hidden');
+              setTimeout(() => toast.classList.add('hidden'), 15000);
             }
-          }).catch(() => { /* fire-and-forget */ });
-          return;
-        }
-        if (data.status === 'error') {
-          console.log('applySuggestions error:', data.error);
-          return;
-        }
-        await new Promise(r => setTimeout(r, 5000));
-      }
-    }
-
-    // Poll ATS completion and show toast
-    async function pollAtsCompletion(atsTaskId) {
-      while (true) {
-        const res = await fetch(`/generate/task/${atsTaskId}`);
-        const data = await res.json();
-        if (data.status === 'complete') {
-          const toast = document.getElementById('ats-toast');
-          if (toast) {
-            toast.textContent = `ATS analysis ready: ${data.result.coveragePercent}% coverage`;
-            toast.classList.remove('hidden');
-            setTimeout(() => toast.classList.add('hidden'), 15000);
           }
           return;
         }
         if (data.status === 'error') {
-          console.log('ATS error:', data.error);
+          console.log('autoChain error:', data.error);
           return;
         }
         await new Promise(r => setTimeout(r, 5000));
@@ -617,41 +597,31 @@
           body: JSON.stringify({ slug: result.jobDir, permalinkUrl: buildPermalink(result.jobDir) }),
         }).catch(() => { /* fire-and-forget */ });
 
-        // Auto-apply suggestions + ATS chain (fire-and-forget)
+        // Auto-apply suggestions + ATS chain (single server-side call)
         const autoApplyChecked = document.getElementById('autoApplySuggestions')?.checked;
         if (autoApplyChecked && result.jobDir) {
-          const preferredAutoAttach = ['structured-output.json', 'job-description.txt', 'other-input.txt', 'ats-analysis.md'];
-          const slugForLookup = result.jobDir;
-          // Pre-filter to files that actually exist in the job folder.
-          // The ATS analysis file may not exist yet on a brand-new job (it
-          // is produced by the post-apply chain on the previous run, or by
-          // the user opening the ATS panel). Missing it must not block the
-          // auto-apply: the prompt treats ATS as a guideline, not a
-          // requirement, and the model is still given the user suggestion
-          // "Review and improve this resume" as a generic fallback.
-          fetch(`/generate/listJobFiles?jobDir=${encodeURIComponent(slugForLookup)}`)
-            .then((r) => r.ok ? r.json() : { files: [] })
-            .then((data) => {
-              const present = new Set((data.files || []).map((f) => f.name));
-              const attachedFiles = preferredAutoAttach.filter((name) => present.has(name));
-              return fetch('/generate/applySuggestions', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  jobDir: slugForLookup,
-                  userSuggestions: 'Review and improve this resume',
-                  attachedFilePaths: attachedFiles,
-                  resumePath: `jobs/${slugForLookup}/structured-output.json`,
-                  redactedResumePath: `jobs/${slugForLookup}/structured-output-redacted.json`,
-                  modelSelect: document.getElementById('model-select')?.value,
-                }),
-              });
-            })
-            .then((res) => res.ok ? res.json() : null)
-            .then((data) => {
+          fetch('/generate/autoChain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jobDescription: document.getElementById('jobDescription')?.value?.trim(),
+              companyName: document.getElementById('companyName')?.value?.trim(),
+              roleName: document.getElementById('roleName')?.value?.trim(),
+              link: document.getElementById('link-input')?.value?.trim(),
+              modelSelect: document.getElementById('model-select')?.value,
+              extraNotes: document.getElementById('extraNotes')?.value?.trim(),
+              generateWithoutJD: document.getElementById('noJdMode')?.checked,
+              coverOutput: document.getElementById('cover-output')?.value || 'both',
+              useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles')?.checked,
+              resumeType: document.getElementById('resumeType')?.value,
+              useCombinedGeneration: combined,
+              userSuggestions: 'Review and improve this resume',
+            }),
+          }).then(r => r.ok ? r.json() : null)
+            .then(data => {
               if (data && data.taskId) {
-                recordTaskId(slugForLookup, data.taskId);
-                pollApplySuggestionsThenAts(data.taskId, slugForLookup);
+                recordTaskId(result.jobDir, data.taskId);
+                pollAutoChain(data.taskId, result.jobDir);
               }
             })
             .catch(() => { /* fire-and-forget: ignore errors */ });
