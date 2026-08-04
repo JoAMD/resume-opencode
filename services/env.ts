@@ -4,6 +4,8 @@ export interface EnvResumeProfile {
   email: string;
   linkedinUrl: string;
   linkedinDisplay: string;
+  githubUrl: string;
+  githubDisplay: string;
   education: {
     institution: string;
     location: string;
@@ -18,6 +20,8 @@ export const DEFAULT_PROFILE: EnvResumeProfile = {
   email: '[your email]',
   linkedinUrl: 'https://linkedin.com/in/[your-handle]',
   linkedinDisplay: 'linkedin.com/in/[your-handle]',
+  githubUrl: 'https://github.com/[your-handle]',
+  githubDisplay: 'github.com/[your-handle]',
   education: [
     {
       institution: 'Institute 1',
@@ -42,6 +46,7 @@ export function normalizeEnvProfile(input?: Partial<EnvResumeProfile>): EnvResum
   const firstEdu: Partial<EnvResumeProfile['education'][number]> = input?.education?.[0] ?? {};
   const secondEdu: Partial<EnvResumeProfile['education'][number]> = input?.education?.[1] ?? {};
   const linkedinUrl = (input?.linkedinUrl ?? '').trim() || DEFAULT_PROFILE.linkedinUrl;
+  const githubUrl = (input?.githubUrl ?? '').trim() || DEFAULT_PROFILE.githubUrl;
 
   return {
     fullName: (input?.fullName ?? '').trim() || DEFAULT_PROFILE.fullName,
@@ -49,6 +54,8 @@ export function normalizeEnvProfile(input?: Partial<EnvResumeProfile>): EnvResum
     email: (input?.email ?? '').trim() || DEFAULT_PROFILE.email,
     linkedinUrl,
     linkedinDisplay: (input?.linkedinDisplay ?? '').trim() || asDisplayFromUrl(linkedinUrl),
+    githubUrl,
+    githubDisplay: (input?.githubDisplay ?? '').trim() || asDisplayFromUrl(githubUrl),
     education: [
       {
         institution: (firstEdu.institution ?? '').trim() || DEFAULT_PROFILE.education[0].institution,
@@ -103,6 +110,8 @@ export function buildProfileFromEnvVars(envVars: Record<string, string>): EnvRes
     email: envVars.RESUME_EMAIL,
     linkedinUrl: envVars.RESUME_LINKEDIN_URL,
     linkedinDisplay: envVars.RESUME_LINKEDIN_DISPLAY,
+    githubUrl: envVars.RESUME_GITHUB_URL,
+    githubDisplay: envVars.RESUME_GITHUB_DISPLAY,
     education: [
       {
         institution: envVars.EDU1_INSTITUTION,

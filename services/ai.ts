@@ -267,7 +267,7 @@ export function enqueueAIRequest<T>(model: string, work: () => Promise<T>): Prom
 }
 
 function loadEnvProfile(): EnvResumeProfile {
-  const envPath = path.resolve(projectRoot, '..', '.env');
+  const envPath = path.resolve(projectRoot, '.env');
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, 'utf8');
     const vars = parseDotEnvContent(content);
@@ -325,8 +325,8 @@ const RESUME_JSON_SCHEMA = {
     email: { type: "string", description: "Email address" },
     linkedinUrl: { type: "string", description: "LinkedIn URL" },
     linkedinDisplay: { type: "string", description: "LinkedIn display name" },
-    // githubUrl: { type: "string", description: "GitHub URL" },
-    // githubDisplay: { type: "string", description: "GitHub display name" },
+    githubUrl: { type: "string", description: "GitHub URL" },
+    githubDisplay: { type: "string", description: "GitHub display name" },
     summary: { type: "string", description: "2-3 sentence tailored objective" },
     skills: {
       type: "object",
@@ -415,8 +415,8 @@ const COMBINED_JSON_SCHEMA = {
         email: { type: "string", description: "Email address" },
         linkedinUrl: { type: "string", description: "LinkedIn URL" },
         linkedinDisplay: { type: "string", description: "LinkedIn display name" },
-        // githubUrl: { type: "string", description: "GitHub URL" },
-        // githubDisplay: { type: "string", description: "GitHub display name" },
+        githubUrl: { type: "string", description: "GitHub URL" },
+        githubDisplay: { type: "string", description: "GitHub display name" },
         summary: { type: "string", description: "Tailored objective" },
         skills: {
           type: "object",
@@ -1083,7 +1083,9 @@ function applyProfileOverrides(json: any): ResumeData {
   updated.phone = ENV_PROFILE.phone;
   updated.linkedinUrl = ENV_PROFILE.linkedinUrl;
   updated.linkedinDisplay = ENV_PROFILE.linkedinDisplay;
-  
+  updated.githubUrl = ENV_PROFILE.githubUrl;
+  updated.githubDisplay = ENV_PROFILE.githubDisplay;
+
   if (updated.education && updated.education.length >= 0) {
     updated.education[0] = { ...updated.education[0], ...ENV_PROFILE.education[0] };
     updated.education[1] = { ...(updated.education[1] || {}), ...ENV_PROFILE.education[1] };
@@ -1493,7 +1495,8 @@ export function buildPrivacySafeBaseResumeForExternalModel(): string {
     .replace('{{PHONE}}', DEFAULT_PROFILE.phone)
     .replace('{{EMAIL}}', DEFAULT_PROFILE.email)
     .replace('{{LINKEDIN_URL}}', DEFAULT_PROFILE.linkedinUrl)
-    // .replace('{{GITHUB_URL}}', DEFAULT_PROFILE.linkedinUrl.replace('linkedin', 'github'))
+    .replace('{{GITHUB_URL}}', DEFAULT_PROFILE.githubUrl)
+    .replace('{{GITHUB_DISPLAY}}', DEFAULT_PROFILE.githubDisplay)
     .replace('{{EDUCATION_1}}', formatEducationLine(DEFAULT_PROFILE.education[0]))
     .replace('{{EDUCATION_2}}', formatEducationLine(DEFAULT_PROFILE.education[1]));
 }
