@@ -650,6 +650,14 @@ For folder-path blur: prefill does not know which resume type was used originall
 - Risk: A new model version returns multi-line bullets; LaTeX compilation fails silently, the user gets a 500 from `compilePDF`.
 - Priority: **Medium**.
 
+### Trim In-Place: Unchanged Detection Uses String Equality
+
+**Symptom:** `enforceResumeCharLimit` detects unchanged files via `readResumeSnapshot(resumePath) === beforeSnapshot` — raw string comparison. A model that makes a whitespace-only edit (e.g., trailing newline change, key reordering) will be flagged as a no-op even though the resume content changed. Conversely, a model that writes identical JSON with different pretty-printing will pass unchanged detection but the char count may differ.
+- Files: `services/ai.ts` (`enforceResumeCharLimit`)
+- Risk: Low. In practice, the model's edits are content-level, not formatting-level. The `JSON.stringify(resume, null, 2)` write pattern in `finalizeResume` normalizes formatting before the trim loop starts, so whitespace drift is unlikely.
+- Workaround: If this becomes a real issue, switch to `resumesAreEqual()` from `diffUtil.ts` (canonicalizes JSON key order) or compare `JSON.stringify(JSON.parse(...))` for content-level equality.
+- Status: Known limitation. Acceptable for now; revisit if model starts making cosmetic-only edits.
+
 ---
 
 *Concerns audit: 2026-07-18*

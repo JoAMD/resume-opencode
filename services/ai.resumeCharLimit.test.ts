@@ -7,7 +7,7 @@ const sessionCalls: Array<{ method: string; sessionId?: string }> = [];
 const promptBodies: Array<{ sessionId?: string; body: any }> = [];
 let sessionCounter = 0;
 let mockClient: any;
-let mockStructuredResponse: any = null;
+let mockFileMutator: ((resumePath: string) => void) | null = null;
 
 function buildSmallResume(): any {
   return {
@@ -79,10 +79,20 @@ function buildMockClient() {
   client.session.prompt.mockImplementation(async (opts: any) => {
     sessionCalls.push({ method: 'prompt', sessionId: opts?.path?.id });
     promptBodies.push({ sessionId: opts?.path?.id, body: opts?.body });
+
+    // For tool-edit mode: extract file path from user content and apply mutator
+    if (mockFileMutator) {
+      const userText: string = opts?.body?.parts?.[0]?.text || '';
+      const pathMatch = userText.match(/REAL RESUME FILE TO EDIT IN PLACE:\s*(\S+)/);
+      if (pathMatch) {
+        mockFileMutator(pathMatch[1]);
+      }
+    }
+
     return {
       data: {
         info: {
-          structured: mockStructuredResponse,
+          structured: undefined,
           parts: [],
           toolCalls: [],
           error: undefined,
@@ -105,7 +115,7 @@ async function loadModule(envOverrides: Record<string, string | undefined> = {})
   promptBodies.length = 0;
   sessionCounter = 0;
   mockClient = undefined;
-  mockStructuredResponse = null;
+  mockFileMutator = null;
   for (const [k, v] of Object.entries(envOverrides)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -115,6 +125,18 @@ async function loadModule(envOverrides: Record<string, string | undefined> = {})
   mockClient = buildMockClient();
   (createOpencodeClient as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockClient);
   return mod;
+}
+
+function applyEditsToFile(resumePath: string, mutator: (resume: any) => void) {
+  const current = JSON.parse(fs.readFileSync(resumePath, 'utf8'));
+  mutator(current);
+  fs.writeFileSync(resumePath, JSON.stringify(current, null, 2), 'utf8');
+}
+
+function makeJobDirWithResume(resume: any): string {
+  const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-job-'));
+  fs.writeFileSync(path.join(jobDir, 'structured-output.json'), JSON.stringify(resume, null, 2), 'utf8');
+  return jobDir;
 }
 
 describe('resume char-limit helpers', () => {
@@ -193,72 +215,199 @@ describe('enforceResumeCharLimit', () => {
     expect(sessionCalls.filter((c) => c.method === 'prompt')).toHaveLength(0);
   });
 
-  it('loops up to the configured max attempts and returns trimmed=true when model keeps overshooting', async () => {
-    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '2';
-    const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
-    const result = await runTrimTestCase(enforceResumeCharLimit, buildOversizedResume(), RESUME_CHAR_LIMIT);
-    expect(result.resume.characterCountTrimmed).toBe('true');
-    const prompts = sessionCalls.filter((c) => c.method === 'prompt');
-    expect(prompts.length).toBeLessThanOrEqual(2);
-    expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
-  });
-
-  it('returns trimmed=true and stops looping as soon as the trimmed result fits', async () => {
-    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
-    const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
-    const result = await runTrimTestCase(enforceResumeCharLimit, buildSmallResume(), RESUME_CHAR_LIMIT);
-    expect(result.resume.characterCountTrimmed).toBe('true');
-    expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
-    const prompts = sessionCalls.filter((c) => c.method === 'prompt');
-    expect(prompts).toHaveLength(1);
-  });
-
-  it('returns trimmed=true and stops on a non-object structured response', async () => {
-    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
-    const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
-    const result = await runTrimTestCase(enforceResumeCharLimit, 'not an object', RESUME_CHAR_LIMIT);
-    expect(result.resume.characterCountTrimmed).toBe('true');
-    expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
-    const prompts = sessionCalls.filter((c) => c.method === 'prompt');
-    expect(prompts).toHaveLength(1);
-  });
-
-  it('reuses the provided session id for trim prompts and does not create or delete sessions', async () => {
-    const { calls } = await runSessionLifecycleCase({ maxAttempts: 2, providedSessionId: 'ses-outer-abc', logDir: tmpLogDir });
-    expect(calls.creates).toHaveLength(0);
-    expect(calls.deletes).toHaveLength(0);
-    expect(calls.prompts).toHaveLength(2);
-    for (const p of calls.prompts) {
-      expect(p.sessionId).toBe('ses-outer-abc');
+  it('edits structured-output.json on disk and returns trimmed result', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
+      const prompts = sessionCalls.filter((c) => c.method === 'prompt');
+      expect(prompts).toHaveLength(1);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
     }
   });
 
-  it('still creates a session for trims when no providedSessionId is supplied (and still does not delete it)', async () => {
-    const { result, calls } = await runSessionLifecycleCase({ maxAttempts: 1, logDir: tmpLogDir });
-    expect(result.resume.characterCountTrimmed).toBe('true');
-    expect(calls.creates).toHaveLength(1);
-    expect(calls.deletes).toHaveLength(0);
-    expect(calls.prompts).toHaveLength(1);
-    expect(calls.creates[0].sessionId).toBe(calls.prompts[0].sessionId);
+  it('loops up to the configured max attempts when model keeps overshooting', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '2';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+      // Mutator always writes something still over limit
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = r.summary.slice(0, 50);
+        });
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
+      const prompts = sessionCalls.filter((c) => c.method === 'prompt');
+      expect(prompts.length).toBeLessThanOrEqual(2);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
   });
 
-  it('passes the job folder path into the trim user content', async () => {
+  it('stops looping as soon as the trimmed result fits', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
+      const prompts = sessionCalls.filter((c) => c.method === 'prompt');
+      expect(prompts).toHaveLength(1);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retries when file is unchanged (no-op)', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+      let attemptCount = 0;
+      mockFileMutator = (rp) => {
+        attemptCount++;
+        if (attemptCount === 1) return; // no-op on first attempt
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
+      const prompts = sessionCalls.filter((c) => c.method === 'prompt');
+      expect(prompts).toHaveLength(2);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retries when file contains malformed JSON', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '3';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
+      let attemptCount = 0;
+      mockFileMutator = (rp) => {
+        attemptCount++;
+        if (attemptCount === 1) {
+          // Write malformed JSON
+          fs.writeFileSync(rp, '{ invalid json }}}', 'utf8');
+          return;
+        }
+        // On retry, write valid trimmed resume directly (file may be malformed)
+        fs.writeFileSync(rp, JSON.stringify({
+          ...buildOversizedResume(),
+          summary: 'Short summary.',
+          experience: [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }],
+          projects: [],
+        }, null, 2), 'utf8');
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(getResumeCharCountLocal(result.resume)).toBeLessThanOrEqual(RESUME_CHAR_LIMIT);
+      const prompts = sessionCalls.filter((c) => c.method === 'prompt');
+      expect(prompts).toHaveLength(2);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies PII overrides after model edit', async () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
-    const jobDir = '/home/user/jobs/shopify-swe';
-    const { enforceResumeCharLimit } = await loadModule();
-    mockStructuredResponse = buildSmallResume();
-    await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
-    const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
-    expect(prompts).toHaveLength(1);
-    const fullPrompt = prompts[0].body.parts[0].text;
-    expect(fullPrompt).toContain(`JOB FOLDER (only directory you may read from or write to): ${jobDir}`);
-    expect(fullPrompt).not.toContain('JOB FOLDER (only directory you may read from or write to): /tmp');
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit } = await loadModule();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.name = 'HACKED NAME';
+          r.email = 'hacked@evil.com';
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      // PII should be overridden by applyProfileOverrides (env profile values)
+      expect(result.resume.name).not.toBe('HACKED NAME');
+      expect(result.resume.email).not.toBe('hacked@evil.com');
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not pass jsonSchema to runOpenCode', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit } = await loadModule();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
+      expect(prompts).toHaveLength(1);
+      // Verify no jsonSchema in the prompt body
+      expect(prompts[0].body).not.toHaveProperty('jsonSchema');
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes the file path and job folder into the trim user content', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { enforceResumeCharLimit } = await loadModule();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
+      await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
+      const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
+      expect(prompts).toHaveLength(1);
+      const fullPrompt = prompts[0].body.parts[0].text;
+      expect(fullPrompt).toContain(`REAL RESUME FILE TO EDIT IN PLACE: ${path.join(jobDir, 'structured-output.json')}`);
+      expect(fullPrompt).toContain(`JOB FOLDER (only directory you may read from or write to): ${jobDir}`);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
   });
 
   it('omits the JOB FOLDER line when jobDir is not provided', async () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
     const { enforceResumeCharLimit } = await loadModule();
-    mockStructuredResponse = buildSmallResume();
+    mockFileMutator = () => {};
     await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
     const prompts = promptBodies.filter((p) => p.body?.parts?.[0]?.text);
     expect(prompts).toHaveLength(1);
@@ -268,12 +417,16 @@ describe('enforceResumeCharLimit', () => {
 
   it('creates a pre-trim backup v1 when the resume is over the limit and jobDir is provided', async () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
-    const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-backup-'));
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
     try {
-      const preTrimJson = JSON.stringify(buildOversizedResume(), null, 2);
-      fs.writeFileSync(path.join(jobDir, 'structured-output.json'), preTrimJson, 'utf8');
       const { enforceResumeCharLimit } = await loadModule();
-      mockStructuredResponse = buildSmallResume();
+      mockFileMutator = (rp) => {
+        applyEditsToFile(rp, (r) => {
+          r.summary = 'Short summary.';
+          r.experience = [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }];
+          r.projects = [];
+        });
+      };
       const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir, jobDir });
       expect(result.resume.characterCountTrimmed).toBe('true');
       expect(result.backup).toBeDefined();
@@ -303,10 +456,40 @@ describe('enforceResumeCharLimit', () => {
   it('omits the backup when jobDir is not provided even if the resume is over the limit', async () => {
     process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '1';
     const { enforceResumeCharLimit } = await loadModule();
-    mockStructuredResponse = buildSmallResume();
+    mockFileMutator = () => {};
     const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: tmpLogDir });
     expect(result.resume.characterCountTrimmed).toBe('true');
     expect(result.backup).toBeUndefined();
+  });
+
+  it('reuses the provided session id for trim prompts and does not create or delete sessions', async () => {
+    process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = '2';
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { calls } = await runSessionLifecycleCase({ maxAttempts: 2, providedSessionId: 'ses-outer-abc', logDir: tmpLogDir, jobDir });
+      expect(calls.creates).toHaveLength(0);
+      expect(calls.deletes).toHaveLength(0);
+      expect(calls.prompts).toHaveLength(2);
+      for (const p of calls.prompts) {
+        expect(p.sessionId).toBe('ses-outer-abc');
+      }
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
+  });
+
+  it('still creates a session for trims when no providedSessionId is supplied (and still does not delete it)', async () => {
+    const jobDir = makeJobDirWithResume(buildOversizedResume());
+    try {
+      const { result, calls } = await runSessionLifecycleCase({ maxAttempts: 1, logDir: tmpLogDir, jobDir });
+      expect(result.resume.characterCountTrimmed).toBe('true');
+      expect(calls.creates).toHaveLength(1);
+      expect(calls.deletes).toHaveLength(0);
+      expect(calls.prompts).toHaveLength(1);
+      expect(calls.creates[0].sessionId).toBe(calls.prompts[0].sessionId);
+    } finally {
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -321,24 +504,30 @@ describe('trim-resume-prompt.txt system prompt', () => {
   });
 });
 
-async function runTrimTestCase(
-  enforceResumeCharLimit: (resume: any, model: string, options: { promptLogDir: string }) => Promise<any>,
-  mockNextResponse: any,
-  _limit: number
-) {
-  const big = buildOversizedResume();
-  mockStructuredResponse = mockNextResponse;
-  return enforceResumeCharLimit(big, 'opencode-go/minimax-m2.7', { promptLogDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ai-trim-inner-')) });
-}
-
-async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: string; providedSessionId?: string }) {
+async function runSessionLifecycleCase(args: { maxAttempts: number; logDir: string; providedSessionId?: string; jobDir: string }) {
   process.env.OPENCODE_KEEP_SESSION = 'false';
   process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS = String(args.maxAttempts);
   const { enforceResumeCharLimit, RESUME_CHAR_LIMIT } = await loadModule();
-  mockStructuredResponse = buildOversizedResume();
-  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: args.logDir, providedSessionId: args.providedSessionId });
+  let sessionAttempt = 0;
+  mockFileMutator = (rp) => {
+    sessionAttempt++;
+    // On last allowed attempt, make it fit; otherwise still over limit
+    if (sessionAttempt >= args.maxAttempts) {
+      fs.writeFileSync(rp, JSON.stringify({
+        name: 'Test User', phone: '0400000000', email: 'test@example.com',
+        linkedinUrl: '', linkedinDisplay: '', summary: 'Short.',
+        skills: { languages: 'TS', frameworks: 'React', tools: 'Git', libraries: '' },
+        experience: [{ company: 'Co', title: 'SWE', location: 'Adelaide', dates: '2024', bullets: ['Short.'] }],
+        education: [{ institution: 'Uni', location: 'Adelaide', degree: 'BS', dates: '2018-2020' }],
+        projects: [],
+      }, null, 2), 'utf8');
+    } else {
+      // Still over limit — truncate summary slightly
+      applyEditsToFile(rp, (r) => { r.summary = r.summary.slice(0, 100); });
+    }
+  };
+  const result = await enforceResumeCharLimit(buildOversizedResume(), 'opencode-go/minimax-m2.7', { promptLogDir: args.logDir, providedSessionId: args.providedSessionId, jobDir: args.jobDir });
   expect(result.resume.characterCountTrimmed).toBe('true');
-  expect(getResumeCharCountLocal(result.resume)).toBeGreaterThan(RESUME_CHAR_LIMIT);
   return {
     result,
     calls: {

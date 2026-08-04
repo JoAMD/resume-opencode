@@ -112,64 +112,32 @@ export async function finalizeResume(
 
 const RESUME_TRIM_MAX_ATTEMPTS = Math.max(0, parseInt(process.env.OPENCODE_RESUME_TRIM_MAX_ATTEMPTS || '3', 10) || 3);
 
-const RESUME_TRIM_JSON_SCHEMA = {
-  type: "object",
-  properties: {
-    name: { type: "string" },
-    phone: { type: "string" },
-    email: { type: "string" },
-    linkedinUrl: { type: "string" },
-    linkedinDisplay: { type: "string" },
-    summary: { type: "string" },
-    skills: {
-      type: "object",
-      properties: {
-        languages: { type: "string" },
-        frameworks: { type: "string" },
-        tools: { type: "string" },
-        libraries: { type: "string" }
-      }
-    },
-    experience: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          company: { type: "string" },
-          title: { type: "string" },
-          location: { type: "string" },
-          dates: { type: "string" },
-          bullets: { type: "array", items: { type: "string" } }
-        }
-      }
-    },
-    education: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          institution: { type: "string" },
-          location: { type: "string" },
-          degree: { type: "string" },
-          dates: { type: "string" }
-        }
-      }
-    },
-    projects: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          techStack: { type: "string" },
-          bullets: { type: "array", items: { type: "string" } }
-        }
-      }
-    },
-    characterCountTrimmed: { type: "string" }
-  },
-  required: ["name", "summary", "skills", "experience", "education"]
-};
+const TRIM_NOOP_FOLLOWUP =
+  'Your previous response did not actually modify the resume file. ' +
+  'Use the opencode `edit` tool (NOT `write`) to edit the structured-output.json on disk. ' +
+  'Make small, concrete edits (a few words or a bullet) and verify the ' +
+  'file changed.';
+
+const TRIM_MALFORMED_JSON_FOLLOWUP =
+  'The file you edited contains invalid JSON and cannot be parsed. ' +
+  'Fix the JSON syntax in the file so it is valid JSON. ' +
+  'Do NOT use `write` — use the `edit` tool to repair the file.';
+
+const TRIM_INVALID_SHAPE_FOLLOWUP =
+  'The file contains valid JSON but is missing required resume fields. ' +
+  'Ensure the file has: name, summary, skills, experience, education. ' +
+  'Do NOT use `write` — use the `edit` tool to fix the file.';
+
+function validateResumeShape(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return 'Not an object';
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.name !== 'string') return 'Missing or invalid "name" field';
+  if (typeof obj.summary !== 'string') return 'Missing or invalid "summary" field';
+  if (!obj.skills || typeof obj.skills !== 'object') return 'Missing or invalid "skills" field';
+  if (!Array.isArray(obj.experience)) return 'Missing or invalid "experience" field';
+  if (!Array.isArray(obj.education)) return 'Missing or invalid "education" field';
+  return null;
+}
 
 export interface EnforceResumeCharLimitResult {
   resume: ResumeData;
@@ -182,12 +150,13 @@ export async function enforceResumeCharLimit(
   options: { promptLogDir?: string; providedSessionId?: string; jobDir?: string } = {}
 ): Promise<EnforceResumeCharLimitResult> {
   const { promptLogDir, providedSessionId, jobDir } = options;
-  let current = resume;
-  let count = getResumeCharCount(current);
+  let count = getResumeCharCount(resume);
 
   if (count <= RESUME_CHAR_LIMIT) {
-    return { resume: { ...current, characterCountTrimmed: 'false' } };
+    return { resume: { ...resume, characterCountTrimmed: 'false' } };
   }
+
+  const resumePath = jobDir ? path.join(jobDir, 'structured-output.json') : undefined;
 
   let backup: BackupResult | undefined;
   if (jobDir) {
@@ -202,43 +171,101 @@ export async function enforceResumeCharLimit(
     log('enforceResumeCharLimit: no jobDir provided, skipping pre-trim backup');
   }
 
-  log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS, 'providedSessionId:', providedSessionId ?? '<none>');
+  log('enforceResumeCharLimit: starting trim, current count:', count, 'limit:', RESUME_CHAR_LIMIT, 'max attempts:', RESUME_TRIM_MAX_ATTEMPTS, 'providedSessionId:', providedSessionId ?? '<none>', 'resumePath:', resumePath ?? '<none>');
+
+  let lastParseError = '';
+  let lastShapeError = '';
 
   for (let attempt = 1; attempt <= RESUME_TRIM_MAX_ATTEMPTS; attempt++) {
-    const userContent = `CURRENT RESUME (already tailored):\n${JSON.stringify(current, null, 2)}\n\nCURRENT CHARACTER COUNT: ${count}\nCHARACTER LIMIT: ${RESUME_CHAR_LIMIT}\n${jobDir ? `JOB FOLDER (only directory you may read from or write to): ${jobDir}\n` : ''}\nReturn a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`;
+    const beforeSnapshot = resumePath ? readResumeSnapshot(resumePath) : '';
 
-    let result: RunOpenCodeResult;
+    let extraInstruction = '';
+    if (attempt > 1) {
+      if (lastParseError) {
+        extraInstruction = `\n\nFOLLOW-UP: ${TRIM_MALFORMED_JSON_FOLLOWUP}\nParse error: ${lastParseError}`;
+      } else if (lastShapeError) {
+        extraInstruction = `\n\nFOLLOW-UP: ${TRIM_INVALID_SHAPE_FOLLOWUP}\nValidation: ${lastShapeError}`;
+      } else if (beforeSnapshot && attempt > 1) {
+        extraInstruction = `\n\nFOLLOW-UP: ${TRIM_NOOP_FOLLOWUP}`;
+      }
+      lastParseError = '';
+      lastShapeError = '';
+    }
+
+    const userContent = [
+      `REAL RESUME FILE TO EDIT IN PLACE: ${resumePath}`,
+      jobDir ? `JOB FOLDER (only directory you may read from or write to): ${jobDir}` : '',
+      `CURRENT CHARACTER COUNT: ${count}`,
+      `CHARACTER LIMIT: ${RESUME_CHAR_LIMIT}`,
+      '',
+      `Return a trimmed version of the same resume whose JSON-serialized length is strictly less than ${RESUME_CHAR_LIMIT}. Do not change the candidate's actual experience, skills, or summary content — only shorten bullet text and trim low-impact wording.`,
+      'Preserve every PII field (name, phone, email, linkedinUrl, linkedinDisplay, githubUrl, githubDisplay) and the full education array. Only change the sections you are trimming.',
+      extraInstruction,
+    ].filter(Boolean).join('\n');
+
     try {
-      result = await enqueueAIRequest(model, () => runOpenCode({
+      await enqueueAIRequest(model, () => runOpenCode({
         systemPrompt: TRIM_RESUME_PROMPT(),
         userContent,
         model,
         promptLogDir,
-        jsonSchema: RESUME_TRIM_JSON_SCHEMA,
         providedSessionId,
         ownsSession: false,
       }));
     } catch (err) {
       logError(`enforceResumeCharLimit: trim attempt ${attempt} failed:`, err);
-      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
+      return { resume: { ...resume, characterCountTrimmed: 'true' }, backup };
     }
 
-    if (!result.structured || typeof result.structured !== 'object') {
-      logError(`enforceResumeCharLimit: trim attempt ${attempt} returned non-object:`, result.structured);
-      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
+    if (resumePath && readResumeSnapshot(resumePath) === beforeSnapshot) {
+      log(`enforceResumeCharLimit: attempt ${attempt} was a no-op (file unchanged)`);
+      if (attempt === RESUME_TRIM_MAX_ATTEMPTS) break;
+      continue;
     }
 
-    current = result.structured as ResumeData;
-    count = getResumeCharCount(current);
+    let fileContent: string;
+    try {
+      fileContent = resumePath ? fs.readFileSync(resumePath, 'utf8') : '';
+    } catch (err) {
+      logError(`enforceResumeCharLimit: attempt ${attempt} failed to read edited file:`, err);
+      return { resume: { ...resume, characterCountTrimmed: 'true' }, backup };
+    }
+
+    let parsed: ResumeData;
+    try {
+      parsed = JSON.parse(fileContent) as ResumeData;
+    } catch (err) {
+      lastParseError = err instanceof Error ? err.message : String(err);
+      log(`enforceResumeCharLimit: attempt ${attempt} produced malformed JSON: ${lastParseError}`);
+      if (attempt === RESUME_TRIM_MAX_ATTEMPTS) break;
+      continue;
+    }
+
+    const shapeError = validateResumeShape(parsed);
+    if (shapeError) {
+      lastShapeError = shapeError;
+      log(`enforceResumeCharLimit: attempt ${attempt} produced invalid shape: ${shapeError}`);
+      if (attempt === RESUME_TRIM_MAX_ATTEMPTS) break;
+      continue;
+    }
+
+    const trimmed = applyProfileOverrides(parsed);
+    count = getResumeCharCount(trimmed);
     log(`enforceResumeCharLimit: attempt ${attempt} produced count ${count} (limit ${RESUME_CHAR_LIMIT})`);
 
     if (count <= RESUME_CHAR_LIMIT) {
-      return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
+      return { resume: { ...trimmed, characterCountTrimmed: 'true' }, backup };
     }
+
+    resume = trimmed;
   }
 
   logError(`enforceResumeCharLimit: still over limit after ${RESUME_TRIM_MAX_ATTEMPTS} attempts (count=${count})`);
-  return { resume: { ...current, characterCountTrimmed: 'true' }, backup };
+  return { resume: { ...resume, characterCountTrimmed: 'true' }, backup };
+}
+
+function readResumeSnapshot(resumePath: string): string {
+  try { return fs.readFileSync(resumePath, 'utf8'); } catch { return ''; }
 }
 
 const aiQueues: Map<string, Promise<unknown>> = new Map();
