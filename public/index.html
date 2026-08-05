@@ -865,9 +865,11 @@
           setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
         });
         row.appendChild(a);
-        const spinner = document.createElement('span');
-        spinner.className = 'inline-spinner artifact-spinner';
-        row.appendChild(spinner);
+        if (source !== 'prefill') {
+          const spinner = document.createElement('span');
+          spinner.className = 'inline-spinner artifact-spinner';
+          row.appendChild(spinner);
+        }
         row.appendChild(btn);
         artifactsEl.appendChild(row);
       });
