@@ -424,43 +424,35 @@
     });
 
     // Polling helper
-    async function waitForTask(taskId, pollInterval = 8000) {
+    async function pollGenerationTask(taskId) {
+      const STEP_ARTIFACTS = {
+        1: ['resume.pdf', 'cover-letter.pdf', 'cover-letter.txt'],
+        4: ['ats-analysis.md'],
+      };
       while (true) {
         const res = await fetch(`/generate/task/${taskId}`);
         const data = await res.json();
-        if (data.status === 'complete') return data.result;
-        if (data.status === 'error') throw new Error(data.error);
-        await new Promise(r => setTimeout(r, pollInterval));
-      }
-    }
 
-    // Poll autoChain task and update UI per step
-    async function pollAutoChain(chainTaskId, jobDir) {
-      while (true) {
-        const res = await fetch(`/generate/task/${chainTaskId}`);
-        const data = await res.json();
+        if (data.stepLabel) {
+          status.textContent = data.stepLabel + '…';
+        }
+
+        const artifactsToRemove = STEP_ARTIFACTS[data.step];
+        if (artifactsToRemove) {
+          for (const name of artifactsToRemove) {
+            const row = document.querySelector(`.artifact-row[data-artifact="${name}"]`);
+            const spinner = row?.querySelector('.artifact-spinner');
+            spinner?.remove();
+          }
+        }
+
         if (data.status === 'complete') {
-          // Dispatch auto-apply-complete with the apply result (step 3) if available
-          if (data.result && data.result.pdfUrl) {
-            window.dispatchEvent(new CustomEvent('auto-apply-complete', {
-              detail: { taskResult: data.result },
-            }));
-          }
-          // Show final ATS toast if coverage is available
-          const coverage = data.result && data.result.coveragePercent;
-          if (coverage !== undefined) {
-            const toast = document.getElementById('ats-toast');
-            if (toast) {
-              toast.textContent = `ATS analysis ready: ${coverage}% coverage`;
-              toast.classList.remove('hidden');
-              setTimeout(() => toast.classList.add('hidden'), 15000);
-            }
-          }
-          return;
+          document.querySelectorAll('.artifact-spinner').forEach(el => el.remove());
+          return data;
         }
         if (data.status === 'error') {
-          console.log('autoChain error:', data.error);
-          return;
+          if (data.error === 'no-op') return data;
+          throw new Error(data.error);
         }
         await new Promise(r => setTimeout(r, 5000));
       }
@@ -525,14 +517,15 @@
         useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles').checked,
         resumeType: document.getElementById('resumeType').value,
         permalinkBaseUrl: window.location.origin + window.location.pathname,
+        autoApplySuggestions: document.getElementById('autoApplySuggestions')?.checked ?? true,
         force,
       });
 
       try {
-        let res = await fetch('/generate/', {
+        let res = await fetch('/generate/autoChain', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(buildPayload(false)),
+          body: JSON.stringify({ ...buildPayload(false), userSuggestions: 'Review and improve this resume' }),
         });
         let data = await res.json();
 
@@ -547,10 +540,10 @@
             status.textContent = 'Generation cancelled — duplicate detected.';
             return;
           }
-          res = await fetch('/generate/', {
+          res = await fetch('/generate/autoChain', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildPayload(true)),
+            body: JSON.stringify({ ...buildPayload(true), userSuggestions: 'Review and improve this resume' }),
           });
           data = await res.json();
         }
@@ -565,13 +558,10 @@
           renderResultBlock(data.jobDir, 'generate');
         }
 
-        // Wait for background task to complete
         status.textContent = 'Generating resume…';
-        console.log('Initial taskId from POST response:', data.taskId);
-        const result = await waitForTask(data.taskId);
-        console.log('Task completed, result:', result);
+        const taskData = await pollGenerationTask(data.taskId);
+        const result = taskData.result;
 
-        // Show result with resume PDF
         document.getElementById('pdf-link').href = result.pdfUrl;
         let folderText = `Saved to: jobs/${result.jobDir}/`;
         lastJobDir = result.jobDir;
@@ -587,56 +577,40 @@
         result.className = 'result';
         status.className = 'status hidden';
         setPermalinkHash(result.jobDir);
-        renderResultBlock(result.jobDir, 'generate');
         configureTrimBackupButton(result.jobDir, result.trimBackupVersion);
         playSuccessSound();
 
-        // Store taskId for this tab's subsequent actions
-        console.log('Storing lastTaskId:', data.taskId);
         lastTaskId = data.taskId;
         recordTaskId(result.jobDir, data.taskId);
         document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
 
-        // Fire-and-forget: write permalink.txt
         fetch('/generate/permalink', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slug: result.jobDir, permalinkUrl: buildPermalink(result.jobDir) }),
         }).catch(() => { /* fire-and-forget */ });
 
-        // Auto-apply suggestions + ATS chain (single server-side call)
-        const autoApplyChecked = document.getElementById('autoApplySuggestions')?.checked;
-        if (autoApplyChecked && result.jobDir) {
-          fetch('/generate/autoChain', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jobDescription: document.getElementById('jobDescription')?.value?.trim(),
-              companyName: document.getElementById('companyName')?.value?.trim(),
-              roleName: document.getElementById('roleName')?.value?.trim(),
-              link: document.getElementById('link-input')?.value?.trim(),
-              modelSelect: document.getElementById('model-select')?.value,
-              extraNotes: document.getElementById('extraNotes')?.value?.trim(),
-              generateWithoutJD: document.getElementById('noJdMode')?.checked,
-              coverOutput: document.getElementById('cover-output')?.value || 'both',
-              useStarMethodForGovtRoles: document.getElementById('useStarMethodForGovtRoles')?.checked,
-              resumeType: document.getElementById('resumeType')?.value,
-              useCombinedGeneration: combined,
-              userSuggestions: 'Review and improve this resume',
-            }),
-          }).then(r => r.ok ? r.json() : null)
-            .then(data => {
-              if (data && data.taskId) {
-                recordTaskId(result.jobDir, data.taskId);
-                pollAutoChain(data.taskId, result.jobDir);
-              }
-            })
-            .catch(() => { /* fire-and-forget: ignore errors */ });
+        const coverage = result.coveragePercent;
+        if (coverage !== undefined) {
+          const toast = document.getElementById('ats-toast');
+          if (toast) {
+            toast.textContent = `ATS analysis ready: ${coverage}% coverage`;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 15000);
+          }
         }
 
-        // Auto-open resume PDF
+        window.dispatchEvent(new CustomEvent('auto-apply-complete', {
+          detail: {
+            taskResult: {
+              ...result,
+              atsStatus: taskData.atsStatus,
+              atsAnalysis: taskData.atsAnalysis,
+            },
+          },
+        }));
+
         window.open(result.pdfUrl, '_blank');
-        // Optionally open cover letter PDF
         if (data.coverPdfUrl) {
           setTimeout(() => window.open(data.coverPdfUrl, '_blank'), 500);
         }
@@ -891,6 +865,9 @@
           setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
         });
         row.appendChild(a);
+        const spinner = document.createElement('span');
+        spinner.className = 'inline-spinner artifact-spinner';
+        row.appendChild(spinner);
         row.appendChild(btn);
         artifactsEl.appendChild(row);
       });

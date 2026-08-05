@@ -922,7 +922,7 @@ describe('Task step tracking', () => {
     expect(typeof probe).toBe('function');
   });
 
-  it('POST /generate/ task has step 1 and label "Generating resume + cover letter"', async () => {
+  it('POST /autoChain returns jobDir in response', async () => {
     stubAllFiles();
     existsSync.mockImplementation((p: unknown) => {
       const s = String(p);
@@ -940,8 +940,36 @@ describe('Task step tracking', () => {
     });
 
     const { default: router } = await import('./generate.js');
-    const post = await invokeRoute(router, 'post', '/', {
+    const post = await invokeRoute(router, 'post', '/autoChain', {
       companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+      userSuggestions: 'Review and improve this resume',
+    });
+    expect(post.status).toBe(200);
+    expect(post.body.taskId).toMatch(/^task_/);
+    expect(post.body.jobDir).toBeDefined();
+  });
+
+  it('POST /autoChain task has step 1 and label "Generating resume + cover letter"', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-1',
+      coverLetterSessionId: 'sess-c-2',
+      atsKeywords: ['kw1', 'kw2'],
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/autoChain', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+      userSuggestions: 'Review and improve this resume',
     });
     expect(post.status).toBe(200);
     expect(post.body.taskId).toMatch(/^task_/);
@@ -970,8 +998,9 @@ describe('Task step tracking', () => {
     });
 
     const { default: router, setTaskStep } = await import('./generate.js');
-    const post = await invokeRoute(router, 'post', '/', {
+    const post = await invokeRoute(router, 'post', '/autoChain', {
       companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+      userSuggestions: 'Review and improve this resume',
     });
     expect(post.status).toBe(200);
     const taskId = post.body.taskId;
@@ -979,5 +1008,38 @@ describe('Task step tracking', () => {
     const poll = await invokeRoute(router, 'get', `/task/${taskId}`);
     expect(poll.body.step).toBe(3);
     expect(poll.body.stepLabel).toBe('Applying ATS suggestions');
+  });
+
+  it('POST /autoChain with autoApplySuggestions false returns jobDir and taskId', async () => {
+    stubAllFiles();
+    existsSync.mockImplementation((p: unknown) => {
+      const s = String(p);
+      return s === JOB_DIR || s === JD_FILE || s === `${JOB_DIR}/other-input.txt`;
+    });
+
+    const generateCombinedJSON = (await import('../services/ai.js')).generateCombinedJSON as Mock;
+    generateCombinedJSON.mockReset();
+    generateCombinedJSON.mockResolvedValue({
+      resume: { name: 'X', summary: 's', skills: {}, experience: [], education: [], projects: [] },
+      coverLetter: null,
+      sessionId: 'sess-c-5',
+      coverLetterSessionId: 'sess-c-6',
+      atsKeywords: [],
+    });
+
+    const { default: router } = await import('./generate.js');
+    const post = await invokeRoute(router, 'post', '/autoChain', {
+      companyName: 'X', roleName: 'Y', jobDescription: 'jd', useCombinedGeneration: true,
+      userSuggestions: 'Review and improve this resume',
+      autoApplySuggestions: false,
+    });
+    expect(post.status).toBe(200);
+    expect(post.body.taskId).toMatch(/^task_/);
+    expect(post.body.jobDir).toBeDefined();
+
+    const poll = await invokeRoute(router, 'get', `/task/${post.body.taskId}`);
+    expect(poll.status).toBe(200);
+    expect(poll.body.step).toBe(1);
+    expect(poll.body.stepLabel).toBe('Generating resume + cover letter');
   });
 });

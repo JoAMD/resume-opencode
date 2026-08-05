@@ -50,6 +50,7 @@ type GenerateRequestBody = {
   force?: boolean;
   permalinkUrl?: string;
   permalinkBaseUrl?: string;
+  autoApplySuggestions?: boolean;
 };
 
 let lastGeneratedResumeJSON: any = null;
@@ -1278,10 +1279,9 @@ router.post('/runAtsBackground', (req, res) => {
   runAtsBackground(taskId, { jobDir, atsKeywords: atsKeywords || [], resumeJSON: resumeJSON || null });
 });
 
-function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { userSuggestions: string }): void {
+function runAutoChainBackground(taskId: string, jobDir: ReturnType<typeof createJobDir>, input: GenerateRequestBody & { userSuggestions: string }): void {
   (async () => {
     try {
-      const jobDir = createJobDir(input.companyName!, input.roleName!, input.modelSelect);
       const options = buildGenerationOptions(input, jobDir.jobDir);
 
       saveJobFile(jobDir.jobDir, 'job-description.txt', input.jobDescription ?? '');
@@ -1305,7 +1305,8 @@ function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { u
           coverOutput: input.coverOutput,
           useCombinedGeneration: input.useCombinedGeneration,
         });
-        const validatedPermalink = validatePermalinkUrl(input.permalinkUrl, jobDir.slug);
+        const validatedPermalink = validatePermalinkUrl(input.permalinkUrl, jobDir.slug)
+          ?? buildPermalinkFromBase(input.permalinkBaseUrl, jobDir.slug);
         if (validatedPermalink) {
           try { writePermalinkTxt(jobDir.jobDir, validatedPermalink); } catch (e) { logError('Failed to write permalink.txt:', e); }
         }
@@ -1322,6 +1323,10 @@ function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { u
         const message = err instanceof Error ? err.message : 'Internal server error';
         logError('AutoChain step 1 error:', err);
         taskMap.set(taskId, { status: 'error', error: message, startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
+        return;
+      }
+
+      if (input.autoApplySuggestions === false) {
         return;
       }
 
@@ -1425,7 +1430,7 @@ function runAutoChainBackground(taskId: string, input: GenerateRequestBody & { u
         taskMap.set(taskId, {
           status: 'complete',
           startedAt: Date.now(),
-          result: { ...taskMap.get(taskId)?.result, coveragePercent },
+          result: { ...genResult.result, coveragePercent },
           step: 4,
           stepLabel: STEP_LABELS[4],
         });
@@ -1464,16 +1469,19 @@ router.post('/autoChain', (req, res) => {
     return;
   }
 
+  const jobDirCtx = createJobDir(companyName!, roleName!, modelSelect);
   const taskId = createTaskId();
   taskMap.set(taskId, { status: 'pending', startedAt: Date.now(), step: 1, stepLabel: STEP_LABELS[1] });
-  res.json({ taskId });
-  runAutoChainBackground(taskId, {
+  res.json({ taskId, jobDir: jobDirCtx.slug });
+  runAutoChainBackground(taskId, jobDirCtx, {
     jobDescription, companyName, roleName, extraNotes, generateWithoutJD,
     coverOutput, lowTokenMode, useCombinedGeneration, modelSelect, modelPreference,
     useStarMethodForGovtRoles, resumeType, force, link,
     userSuggestions,
     permalinkUrl: body.permalinkUrl,
+    permalinkBaseUrl: body.permalinkBaseUrl,
     fullJD: body.fullJD,
+    autoApplySuggestions: body.autoApplySuggestions,
   });
 });
 

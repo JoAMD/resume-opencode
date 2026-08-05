@@ -8,13 +8,15 @@ When `autoApplySuggestions` is checked, the client makes two API calls:
 
 Result: two identical folders ~2 min apart for the same job.
 
+When `autoApplySuggestions` is unchecked, client calls POST `/generate/` only — different code path, different endpoint. Two code paths for same core operation.
+
 ## Root Cause
 
 `runAutoChainBackground` (generate.ts:1281) calls `createJobDir()` which always creates a new timestamped folder. It never receives the folder from step 1.
 
 ## Solution
 
-Use `autoChain` as the single server-side endpoint. Client sends one call, server runs all steps in one folder.
+Use `autoChain` as the single server-side endpoint for all cases. Client sends one call, server runs all steps in one folder. `autoApplySuggestions` flag controls whether steps 2-4 run.
 
 ## Changes
 
@@ -41,11 +43,20 @@ Then pass `jobDirCtx` into `runAutoChainBackground` instead of having it call `c
 
 **b. Add `permalinkBaseUrl` support to `runAutoChainBackground`**
 
-Line 1281: add `permalinkBaseUrl` to the input type, pass it through to `buildPermalinkFromBase` at line 1308.
+Line 1281: add `permalinkBaseUrl` to the input type. At line 1308, add `buildPermalinkFromBase` fallback — same pattern as `/generate/` handler (line 350-354):
+
+```ts
+// Line 1308 — before:
+const validatedPermalink = validatePermalinkUrl(input.permalinkUrl, jobDir.slug);
+
+// After:
+const validatedPermalink = validatePermalinkUrl(input.permalinkUrl, jobDir.slug)
+  ?? buildPermalinkFromBase(input.permalinkBaseUrl, jobDir.slug);
+```
 
 **c. Support `autoApplySuggestions: false` mode**
 
-Add field to `GenerateRequestBody` type (line 35). When `false`, `autoChain` runs only step 1 (skip steps 2-4). This lets the endpoint replace POST `/` for all cases.
+Add field to `GenerateRequestBody` type (line 35). When `false`, `autoChain` runs only step 1 (skip steps 2-4). This lets the endpoint replace POST `/` for all cases:
 
 ```ts
 // In runAutoChainBackground, after step 1 completes:
@@ -83,10 +94,10 @@ if (data.status === 'error') {
 For `autoApplySuggestions: false` (step 1 only), `genResult.result` contains:
 - `pdfUrl`, `jobDir`, `sessionId`, `trimBackupPath`, `trimBackupVersion`
 
-For `autoApplySuggestions: true` (all 4 steps), the final task result at line 1425-1431 merges step 1 + step 4 results via spread. Verify these fields survive:
+For `autoApplySuggestions: true` (all 4 steps), the final task result at line 1425-1431 merges step 1 + step 4 results via spread. These fields survive:
 - `pdfUrl` — from step 1, preserved in spread at line 1372
 - `jobDir` — from step 1, preserved
-- `trimBackupVersion` — from step 1, preserved
+- `trimBackupVersion` — from step 1, preserved (no collision with `backupVersion` from `applyBuilt`)
 - `coveragePercent` — from step 4, added at line 1428
 
 **f. Keep POST `/generate/` for backward compat**
@@ -161,8 +172,15 @@ if (coverage !== undefined) {
 }
 
 // Dispatch auto-apply-complete for suggestions.js listener
+// Pass atsStatus/atsAnalysis from task object (they live on the task, not in result)
 window.dispatchEvent(new CustomEvent('auto-apply-complete', {
-  detail: { taskResult: result },
+  detail: {
+    taskResult: {
+      ...result,
+      atsStatus: data.atsStatus,
+      atsAnalysis: data.atsAnalysis,
+    },
+  },
 }));
 ```
 
@@ -266,8 +284,8 @@ The link stays clickable the whole time — if the file exists on disk (e.g. res
 
 | File | Change |
 |------|--------|
-| `routes/generate.ts` | Move createJobDir before response, add permalinkBaseUrl, add autoApplySuggestions flag, ensure result fields consistent |
-| `public/index.html` | Single autoChain call, unified polling with step labels, remove fire-and-forget block, dispatch auto-apply-complete event, add artifact spinners |
+| `routes/generate.ts` | Move createJobDir before response, add permalinkBaseUrl with buildPermalinkFromBase fallback, add autoApplySuggestions flag, ensure result fields consistent |
+| `public/index.html` | Single autoChain call, unified polling with step labels, remove fire-and-forget block, dispatch auto-apply-complete with atsStatus/atsAnalysis from task object, add artifact spinners |
 | `public/style.css` | No changes needed — `.inline-spinner` already exists |
 
 ## What Stayed the Same
@@ -277,14 +295,14 @@ The link stays clickable the whole time — if the file exists on disk (e.g. res
 - All step labels and task tracking unchanged
 - `applySuggestions`, `runATSAnalysis`, `runAtsAiService` unchanged
 - `suggestions.js` listener for `auto-apply-complete` still fires (from unified polling)
+- `showResult` in suggestions.js targets different DOM elements than `renderResultBlock` — no overlap
 
 ## Verification
 
 1. Generate with autoApply checked → one folder, 4 steps, resume + ATS in result
 2. Generate with autoApply unchecked → one folder, step 1 only, resume in result
-3. Generate Resume Only button → same behavior, `useCombinedGeneration: false`
-4. Duplicate detection → 409 with confirm dialog, retry with `force: true`
-5. Step 3 no-op → result shown without ATS toast, no error shown
-6. Step progress → status text updates per step during generation ("Generating resume + cover letter…", "Running ATS analysis…", etc.)
-7. Artifact spinners → spinners next to each file link, removed per-step (Resume/Cover spinners after step 1, ATS Analysis spinner after step 4)
-8. Run existing tests: `npx vitest run routes/generate.test.ts`
+3. Duplicate detection → 409 with confirm dialog, retry with `force: true`
+4. Step 3 no-op → result shown without ATS toast, no error shown
+5. Step progress → status text updates per step during generation ("Generating resume + cover letter…", "Running ATS analysis…", etc.)
+6. Artifact spinners → spinners next to each file link, removed per-step (Resume/Cover spinners after step 1, ATS Analysis spinner after step 4)
+7. Run existing tests: `npx vitest run routes/generate.test.ts`
