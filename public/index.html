@@ -560,37 +560,37 @@
 
         status.textContent = 'Generating resume…';
         const taskData = await pollGenerationTask(data.taskId);
-        const result = taskData.result;
+        const taskResult = taskData.result;
 
-        document.getElementById('pdf-link').href = result.pdfUrl;
-        let folderText = `Saved to: jobs/${result.jobDir}/`;
-        lastJobDir = result.jobDir;
-        if (result.coverPdfUrl) {
-          folderText += ` | Cover: ${result.coverPdfUrl}`;
+        document.getElementById('pdf-link').href = taskResult.pdfUrl;
+        let folderText = `Saved to: jobs/${taskResult.jobDir}/`;
+        lastJobDir = taskResult.jobDir;
+        if (taskResult.coverPdfUrl) {
+          folderText += ` | Cover: ${taskResult.coverPdfUrl}`;
         }
         document.getElementById('job-folder').textContent = folderText;
-        if (result.sessionId) {
+        if (taskResult.sessionId) {
           const sidEl = document.getElementById('session-id');
-          document.getElementById('session-id-value').textContent = result.sessionId;
+          document.getElementById('session-id-value').textContent = taskResult.sessionId;
           sidEl.classList.remove('hidden');
         }
         result.className = 'result';
         status.className = 'status hidden';
-        setPermalinkHash(result.jobDir);
-        configureTrimBackupButton(result.jobDir, result.trimBackupVersion);
+        setPermalinkHash(taskResult.jobDir);
+        configureTrimBackupButton(taskResult.jobDir, taskResult.trimBackupVersion);
         playSuccessSound();
 
         lastTaskId = data.taskId;
-        recordTaskId(result.jobDir, data.taskId);
-        document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + result.jobDir;
+        recordTaskId(taskResult.jobDir, data.taskId);
+        document.getElementById('folderPath').value = (globalThis.__JOBS_PATH__ || '') + '/' + taskResult.jobDir;
 
         fetch('/generate/permalink', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: result.jobDir, permalinkUrl: buildPermalink(result.jobDir) }),
+          body: JSON.stringify({ slug: taskResult.jobDir, permalinkUrl: buildPermalink(taskResult.jobDir) }),
         }).catch(() => { /* fire-and-forget */ });
 
-        const coverage = result.coveragePercent;
+        const coverage = taskResult.coveragePercent;
         if (coverage !== undefined) {
           const toast = document.getElementById('ats-toast');
           if (toast) {
@@ -603,16 +603,16 @@
         window.dispatchEvent(new CustomEvent('auto-apply-complete', {
           detail: {
             taskResult: {
-              ...result,
+              ...taskResult,
               atsStatus: taskData.atsStatus,
               atsAnalysis: taskData.atsAnalysis,
             },
           },
         }));
 
-        window.open(result.pdfUrl, '_blank');
-        if (data.coverPdfUrl) {
-          setTimeout(() => window.open(data.coverPdfUrl, '_blank'), 500);
+        window.open(taskResult.pdfUrl, '_blank');
+        if (taskResult.coverPdfUrl) {
+          setTimeout(() => window.open(taskResult.coverPdfUrl, '_blank'), 500);
         }
       } catch (err) {
         playFailureSound();
