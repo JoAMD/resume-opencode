@@ -239,7 +239,11 @@ To script the diff from the terminal, the same data is reachable via `GET /gener
 - No sensitive data sent to third-party APIs (uses local opencode + self-hosted when possible)
 - Basic auth on admin endpoints
 
-## Scripts
+### Logging
+
+All service code uses `log()` and `logError()` from `services/logger.ts`. These write to per-day files under `logs/server-YYYY-MM-DD.log` and echo to stdout/stderr. Do **not** use raw `console.log` / `console.error` in service code — they skip the file logger and are invisible to anyone tailing the log file.
+
+### Scripts
 
 ```bash
 npm run dev    # Development with hot reload (tsx watch)

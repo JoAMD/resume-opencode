@@ -124,6 +124,12 @@ rejected as incomplete.
 
 ---
 
+# Coding Conventions
+
+- **Use `log()` / `logError()` from `services/logger.ts`**, never raw `console.log` / `console.error`. Console output skips the file logger (`logs/server-YYYY-MM-DD.log`) and is invisible to anyone tailing logs.
+
+---
+
 # Files Tracked Outside This Repo (intentional)
 
 `prompts/` and `templates/` are gitignored on purpose. They are owned

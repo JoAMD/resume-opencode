@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { logError } from './logger';
 
 export type TexCompiler = 'tectonic' | 'pdflatex';
 
@@ -17,7 +18,7 @@ function reportLatexFailure(texPath: string, err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
   const stderr = (err as { stderr?: Buffer | null })?.stderr?.toString() ?? '';
   const logTail = readLatexLogTail(texPath.replace(/\.tex$/i, '.log'));
-  console.error(`[compilePDFViaPdflatex] pdflatex failed for ${texPath}\n${message}\n${stderr}\n--- log tail ---\n${logTail}`);
+  logError(`[compilePDFViaPdflatex] pdflatex failed for ${texPath}\n${message}\n${stderr}\n--- log tail ---\n${logTail}`);
   throw new Error(`pdflatex failed for ${path.basename(texPath)}: ${message}`);
 }
 

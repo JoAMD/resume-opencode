@@ -651,7 +651,7 @@ function preparePrompt(config: PromptConfig): PromptPreparationResult {
 
 function writePromptFile(promptFile: string, content: string): void {
   fs.writeFileSync(promptFile, content, 'utf8');
-  console.log('Prompt file written:', promptFile);
+  log('Prompt file written:', promptFile);
 }
 
 async function createOpencodeSession(client: any, model: string): Promise<string> {
@@ -699,7 +699,7 @@ function buildPromptBody(fullPrompt: string, jsonSchema?: object, useStructuredO
     promptBody.model = { providerID: MODEL_PROVIDER_ID, modelID: MODEL_ID };
   }
 
-  console.log("prompt body model details", promptBody.model);
+  log("prompt body model details", promptBody.model);
   return promptBody;
 }
 
@@ -711,7 +711,7 @@ function extractJsonFromTextParts(allParts: any[]): { parsed: any; text: string 
 
     const parsed = parseJSONFromResponse(text);
     if (parsed && Object.keys(parsed).length > 0) {
-      console.log("Successfully parsed JSON from text part");
+      log("Successfully parsed JSON from text part");
       return { parsed, text };
     }
   }
@@ -727,10 +727,10 @@ function extractJsonFromToolCalls(toolCalls: any[]): any | null {
         if (jsonMatch) {
           try {
             const parsed = JSON.parse(jsonMatch[0]);
-            console.log("Successfully extracted JSON from bash tool call");
+            log("Successfully extracted JSON from bash tool call");
             return parsed;
           } catch (e) {
-            console.error("Failed to parse JSON from tool call:", e);
+            logError("Failed to parse JSON from tool call:", e);
           }
         }
       }
@@ -773,7 +773,7 @@ function deepParseJsonStrings(obj: any): any {
 
 function parseStructuredResult(result: any, jsonSchema?: object): ParseResultResult | null {
   if (jsonSchema && result.data?.info?.structured) {
-    console.log('\n========== OPENCODE DONE (structured) ==========\n');
+    log('========== OPENCODE DONE (structured) ==========');
     return {
       structured: deepParseJsonStrings(result.data.info.structured),
       rawText: '',
@@ -787,8 +787,8 @@ function parseTextResult(result: any, jsonSchema?: object, outputFilePath?: stri
   const allParts = result.data?.info?.parts || result.data?.parts || [];
 
   if (jsonSchema && result.data?.info?.error?.name === "StructuredOutputError") {
-    console.error("Failed to produce structured output:", result.data.info.error.message);
-    console.error("Attempts:", result.data.info.error.retries);
+    logError("Failed to produce structured output:", result.data.info.error.message);
+    logError("Attempts:", result.data.info.error.retries);
   }
 
   const jsonFromText = extractJsonFromTextParts(allParts);
@@ -802,7 +802,7 @@ function parseTextResult(result: any, jsonSchema?: object, outputFilePath?: stri
 
   const info = result.data?.info;
   if (jsonSchema && !info?.structured && info?.toolCalls) {
-    console.log("Model used tool calls instead of text output, checking tool results...");
+    log("Model used tool calls instead of text output, checking tool results...");
     const parsedFromTool = extractJsonFromToolCalls(info.toolCalls);
     if (parsedFromTool) {
       return {
@@ -814,7 +814,7 @@ function parseTextResult(result: any, jsonSchema?: object, outputFilePath?: stri
   }
 
   if (outputFilePath) {
-    console.log(`Polling for output file: ${outputFilePath}`);
+    log(`Polling for output file: ${outputFilePath}`);
     return null;
   }
 
@@ -822,7 +822,7 @@ function parseTextResult(result: any, jsonSchema?: object, outputFilePath?: stri
     || result.data?.content
     || '';
 
-  console.log('\n========== OPENCODE DONE ==========\n');
+  log('========== OPENCODE DONE ==========');
   return {
     structured: resultText,
     rawText: resultText,
@@ -835,7 +835,7 @@ async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult
   if (fileContent) {
     const parsed = parseJSONFromResponse(fileContent);
     if (parsed && Object.keys(parsed).length > 0) {
-      console.log("Successfully read JSON from output file");
+      log("Successfully read JSON from output file");
       return {
         structured: parsed,
         rawText: fileContent,
@@ -843,7 +843,7 @@ async function pollOutputFile(outputFilePath: string): Promise<ParseResultResult
       };
     }
   } else {
-    console.error(`Output file not found or empty after timeout: ${outputFilePath}`);
+    logError(`Output file not found or empty after timeout: ${outputFilePath}`);
   }
   return null;
 }
@@ -891,13 +891,13 @@ function diagnosePromptError(err: any, signal: AbortSignal, timeoutMs: number): 
   const errCode = err?.cause?.code;
   const errMessage = err?.message || String(err);
   const isAbort = signal.aborted;
-  console.log(`[timing]   error.name: ${errName}`);
-  console.log(`[timing]   error.cause.code: ${errCode}`);
-  console.log(`[timing]   error.message: ${errMessage}`);
-  console.log(`[timing]   abortSignal.aborted: ${isAbort} (reason: ${isAbort ? (signal.reason?.message || 'n/a') : 'n/a'})`);
+  log(`[timing]   error.name: ${errName}`);
+  log(`[timing]   error.cause.code: ${errCode}`);
+  log(`[timing]   error.message: ${errMessage}`);
+  log(`[timing]   abortSignal.aborted: ${isAbort} (reason: ${isAbort ? (signal.reason?.message || 'n/a') : 'n/a'})`);
   const diagnosis = PROMPT_ERROR_DIAGNOSES.find((d) => d.matches(err, isAbort, errMessage))!;
   const suffix = errMessage.includes('timed out') ? ` (timeout was ${timeoutMs}ms)` : '';
-  console.log(`[timing]   DIAGNOSIS: ${diagnosis.message}${suffix}`);
+  log(`[timing]   DIAGNOSIS: ${diagnosis.message}${suffix}`);
 }
 
 async function executeOpencodePrompt(client: any, sessionId: string, promptBody: any, timeoutMs: number = AI_PROMPT_TIMEOUT_MS): Promise<any> {
@@ -907,7 +907,7 @@ async function executeOpencodePrompt(client: any, sessionId: string, promptBody:
   try {
     await maybeApplyDebugSleep(ac.signal);
     const promptStartMs = Date.now();
-    console.log(`[timing] client.session.prompt start (elapsed since fetch start: ${promptStartMs - fetchStartMs}ms, abortTimeoutMs: ${timeoutMs})`);
+    log(`[timing] client.session.prompt start (elapsed since fetch start: ${promptStartMs - fetchStartMs}ms, abortTimeoutMs: ${timeoutMs})`);
     let result: any;
     try {
       result = await client.session.prompt({
@@ -916,17 +916,17 @@ async function executeOpencodePrompt(client: any, sessionId: string, promptBody:
         signal: ac.signal,
       } as any);
     } catch (promptErr: any) {
-      console.log(`[timing] client.session.prompt FAILED after ${Date.now() - fetchStartMs}ms`);
+      log(`[timing] client.session.prompt FAILED after ${Date.now() - fetchStartMs}ms`);
       diagnosePromptError(promptErr, ac.signal, timeoutMs);
       throw promptErr;
     }
-    console.log(`[timing] client.session.prompt OK in ${Date.now() - promptStartMs}ms (total since fetch start: ${Date.now() - fetchStartMs}ms)`);
+    log(`[timing] client.session.prompt OK in ${Date.now() - promptStartMs}ms (total since fetch start: ${Date.now() - fetchStartMs}ms)`);
 
     if (result.error) {
       throw new Error(`Prompt error: ${JSON.stringify(result.error)}`);
     }
 
-    console.log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000));
+    log("opencode prompt result = ", JSON.stringify(result, null, 2).slice(0, 2000));
     return result;
   } finally {
     clearTimeout(timer);
@@ -952,17 +952,17 @@ export function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult
     try {
       writePromptFile(promptFile, fullPrompt);
     } catch (err) {
-      console.error('Failed to write prompt file:', err);
+      logError('Failed to write prompt file:', err);
       reject(err);
       return;
     }
 
-    console.log('\n========== OPENCODE STARTING ==========');
-    console.log('Model:', modelToUse);
-    console.log('Structured output:', useStructuredOutput ? 'yes' : 'no');
-    console.log('Prompt file:', promptFile);
-    console.log('Prompt timeout (ms):', AI_PROMPT_TIMEOUT_MS);
-    console.log('=====================================\n');
+    log('========== OPENCODE STARTING ==========');
+    log('Model:', modelToUse);
+    log('Structured output:', useStructuredOutput ? 'yes' : 'no');
+    log('Prompt file:', promptFile);
+    log('Prompt timeout (ms):', AI_PROMPT_TIMEOUT_MS);
+    log('=====================================');
 
     const runStartMs = Date.now();
     try {
@@ -975,8 +975,8 @@ export function runOpenCode(opts: RunOpenCodeOptions): Promise<RunOpenCodeResult
       resolve(pipeline);
     } catch (err) {
       const totalElapsedMs = Date.now() - runStartMs;
-      console.log(`[timing] runOpenCode caught error after ${totalElapsedMs}ms total`);
-      console.log('[AI ERROR]', err);
+      log(`[timing] runOpenCode caught error after ${totalElapsedMs}ms total`);
+      log('[AI ERROR]', err);
       reject(err);
     }
   });
