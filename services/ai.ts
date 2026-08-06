@@ -517,7 +517,7 @@ const COMBINED_JSON_SCHEMA = {
       required: ["openingParagraph", "bodyParagraph", "closingParagraph"]
     }
   },
-  required: ["resume", "coverLetter"]
+  required: ["resume", "coverLetter", "atsKeywords"]
 };
 
 const PROMPTS_DIR = process.env.OPENCODE_PROMPTS_DIR || path.join(projectRoot, 'prompts');

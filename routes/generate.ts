@@ -1111,7 +1111,7 @@ async function runPostApplyAtsAnalysis(input: { jobDir: string; modelSelect?: st
     }
 
     const priorAts = readJsonIfExists(path.join(input.jobDir, 'ats-analysis.json'));
-    const atsKeywords: string[] = priorAts?.keywords || [];
+    const atsKeywords: string[] = priorAts?.extractedFromJD || [];
 
     const { analysis, source } = await runPostApplyAtsCall({
       resume: resumeJSON,
@@ -1148,7 +1148,7 @@ async function runPostApplyAtsCall(input: {
   try {
     const { runAtsAiAnalysis } = await import('../services/atsAiService.js');
     const outcome = await runAtsAiAnalysis({
-      jobDescription: '',
+      jobDescription: loadJobDescriptionFromDir(input.jobDir) || '',
       resume: input.resume,
       jdKeywords: input.atsKeywords,
       jobDir: input.jobDir,
@@ -1222,7 +1222,7 @@ function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
         if (fs.existsSync(atsJsonPath)) {
           try {
             const atsData = JSON.parse(fs.readFileSync(atsJsonPath, 'utf8'));
-            atsKeywords = atsData.keywords || [];
+            atsKeywords = atsData.extractedFromJD || [];
           } catch (e) { /* ignore */ }
         }
       }
@@ -1230,7 +1230,7 @@ function runAtsBackground(taskId: string, input: RunAtsBackgroundInput): void {
       let coveragePercent: number;
       try {
         const outcome = await runAtsAiAnalysis({
-          jobDescription: '',
+          jobDescription: loadJobDescriptionFromDir(input.jobDir) || '',
           resume: resumeJSON!,
           jdKeywords: atsKeywords,
           jobDir: input.jobDir,
@@ -1411,11 +1411,11 @@ function runAutoChainBackground(taskId: string, jobDir: ReturnType<typeof create
         let atsKeywords: string[] = [];
         const atsJsonPath = path.join(jobDir.jobDir, 'ats-analysis.json');
         if (fs.existsSync(atsJsonPath)) {
-          try { const d = JSON.parse(fs.readFileSync(atsJsonPath, 'utf8')); atsKeywords = d.keywords || []; } catch (e) { /* ignore */ }
+          try { const d = JSON.parse(fs.readFileSync(atsJsonPath, 'utf8')); atsKeywords = d.extractedFromJD || []; } catch (e) { /* ignore */ }
         }
         let coveragePercent: number;
         try {
-          const outcome = await runAtsAiAnalysis({ jobDescription: '', resume: resumeJSON!, jdKeywords: atsKeywords, jobDir: jobDir.jobDir });
+          const outcome = await runAtsAiAnalysis({ jobDescription: loadJobDescriptionFromDir(jobDir.jobDir) || '', resume: resumeJSON!, jdKeywords: atsKeywords, jobDir: jobDir.jobDir });
           coveragePercent = outcome.analysis.coveragePercent;
           saveJobFile(jobDir.jobDir, 'ats-analysis.json', JSON.stringify(outcome.analysis, null, 2));
           saveJobFile(jobDir.jobDir, 'ats-analysis.md', buildAtsAnalysisMarkdown(outcome.analysis));
