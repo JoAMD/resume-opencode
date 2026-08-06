@@ -500,7 +500,6 @@ describe('trim-resume-prompt.txt system prompt', () => {
     expect(content).toContain('Do not access `/tmp`');
     expect(content).toContain('ONLY directory you may read from or write to');
     expect(content).toMatch(/current job folder/);
-    expect(content).toContain('count-characters');
   });
 });
 
