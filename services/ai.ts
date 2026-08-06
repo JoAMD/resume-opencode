@@ -569,11 +569,26 @@ function buildBaseResume(useMinimal = false, resumeType?: 'software' | 'qa'): st
     // .replace('{{EDUCATION_2}}', formatEducationLine(ENV_PROFILE.education[1]));
 }
 
-function parseJSONFromResponse(text: string): any {
+export function parseJSONFromResponse(text: string): any {
+  // Try last code block first — model may prepend reasoning before JSON
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/g;
+  let lastBlock: string | null = null;
+  let match;
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    lastBlock = match[1];
+  }
+  if (lastBlock) {
+    try {
+      return JSON.parse(lastBlock);
+    } catch {}
+  }
+
+  // Fallback: strip fences at boundaries, then try parsing
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   try {
     return JSON.parse(cleaned);
   } catch {
+    // Find last complete JSON object (greedy match on last closing brace)
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
