@@ -347,13 +347,6 @@ const RESUME_JSON_SCHEMA = {
   type: "object",
   properties: {
     atsKeywords: { type: "array", items: { type: "string" }, description: "All ATS keywords extracted from the JD (lowercase)" },
-    name: { type: "string", description: "Candidate full name" },
-    phone: { type: "string", description: "Phone number" },
-    email: { type: "string", description: "Email address" },
-    linkedinUrl: { type: "string", description: "LinkedIn URL" },
-    linkedinDisplay: { type: "string", description: "LinkedIn display name" },
-    githubUrl: { type: "string", description: "GitHub URL" },
-    githubDisplay: { type: "string", description: "GitHub display name" },
     summary: { type: "string", description: "2-3 sentence tailored objective" },
     skills: {
       type: "object",
@@ -401,33 +394,22 @@ const RESUME_JSON_SCHEMA = {
       }
     }
   },
-  required: ["name", "phone", "email", "summary", "skills", "experience", "education", "projects"]
+  required: ["summary", "skills", "experience", "education", "projects"]
 };
 
 const COVER_LETTER_JSON_SCHEMA = {
   type: "object",
   properties: {
-    fullName: { type: "string", description: "Candidate full name" },
-    email: { type: "string", description: "Email address" },
-    phone: { type: "string", description: "Phone number" },
-    linkedinUrl: { type: "string", description: "LinkedIn URL" },
-    linkedinDisplay: { type: "string", description: "LinkedIn display name" },
     dateLine: { type: "string", description: "Date line (e.g., 'May 4, 2026')" },
     recipientLine: { type: "string", description: "Recipient line (e.g., 'Hiring Manager')" },
     subjectLine: { type: "string", description: "Email subject line" },
     greeting: { type: "string", description: "Salutation (e.g., 'Dear Hiring Manager,')" },
     openingParagraph: { type: "string", description: "Opening paragraph" },
-    bodyParagraph: {
-      oneOf: [
-        { type: "array", items: { type: "string" }, description: "Array of body paragraphs (preferred)." },
-        { type: "string", description: "Body paragraphs concatenated with blank lines." }
-      ],
-      description: "Body content. Use an array of paragraphs (preferred) or a single string with blank-line separated paragraphs."
-    },
+    bodyParagraph: { type: "array", items: { type: "string" }, description: "Array of body paragraphs." },
     closingParagraph: { type: "string", description: "Closing paragraph" },
     signoff: { type: "string", description: "Sign-off (e.g., 'Sincerely,')" }
   },
-  required: ["fullName", "email", "phone", "openingParagraph", "bodyParagraph", "closingParagraph"]
+  required: ["openingParagraph", "bodyParagraph", "closingParagraph"]
 };
 
 const COMBINED_JSON_SCHEMA = {
@@ -437,13 +419,6 @@ const COMBINED_JSON_SCHEMA = {
     resume: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Candidate full name" },
-        phone: { type: "string", description: "Phone number" },
-        email: { type: "string", description: "Email address" },
-        linkedinUrl: { type: "string", description: "LinkedIn URL" },
-        linkedinDisplay: { type: "string", description: "LinkedIn display name" },
-        githubUrl: { type: "string", description: "GitHub URL" },
-        githubDisplay: { type: "string", description: "GitHub display name" },
         summary: { type: "string", description: "Tailored objective" },
         skills: {
           type: "object",
@@ -491,26 +466,17 @@ const COMBINED_JSON_SCHEMA = {
           }
         }
       },
-      required: ["name", "summary", "skills", "experience", "education"]
+      required: ["summary", "skills", "experience", "education"]
     },
     coverLetter: {
       type: "object",
       properties: {
-        fullName: { type: "string" },
-        email: { type: "string" },
-        phone: { type: "string" },
         dateLine: { type: "string" },
         recipientLine: { type: "string" },
         subjectLine: { type: "string" },
         greeting: { type: "string" },
         openingParagraph: { type: "string" },
-        bodyParagraph: {
-          oneOf: [
-            { type: "array", items: { type: "string" } },
-            { type: "string" }
-          ],
-          description: "Body paragraphs. Use an array of paragraphs (preferred) or a single string with blank-line separated paragraphs."
-        },
+        bodyParagraph: { type: "array", items: { type: "string" }, description: "Body paragraphs as array." },
         closingParagraph: { type: "string" },
         signoff: { type: "string" }
       },
@@ -1118,6 +1084,12 @@ export function normaliseBodyParagraph(value: unknown): string[] {
   return [];
 }
 
+// ponytail: substring match — "react" matches "reaction" but edge cases rare enough
+export function filterATSKeywords(keywords: string[], jdText: string): string[] {
+  const jdLower = jdText.toLowerCase();
+  return keywords.filter(kw => jdLower.includes(kw.toLowerCase()));
+}
+
 function applyProfileOverrides(json: any): ResumeData {
   const updated = { ...json };
   updated.name = ENV_PROFILE.fullName;
@@ -1329,11 +1301,11 @@ export async function generateCombinedJSON(
 
     const result = await enqueueAIRequest(model, () => runOpenCode({ systemPrompt, userContent, model, promptLogDir: options?.promptLogDir, jsonSchema: COMBINED_JSON_SCHEMA }));
 
-    if (!result.structured?.resume?.name || typeof result.structured.resume.name !== 'string') {
+    if (!result.structured?.resume?.summary || typeof result.structured.resume.summary !== 'string') {
       throw buildInvalidResponseError(
         result.sessionId,
         result.rawModelOutput ?? '',
-        'resume.name missing or non-string in structured response'
+        'resume.summary missing or non-string in structured response'
       );
     }
 
@@ -1343,7 +1315,7 @@ export async function generateCombinedJSON(
     const { resume, backup: trimBackup } = await finalizeResume(result.structured.resume, model, options?.promptLogDir, { callerLabel: 'generateCombinedJSON', providedSessionId: result.sessionId, jobDir: options?.jobDir });
     const coverLetter = applyCoverLetterOverrides(coverLetterRaw);
     return {
-      atsKeywords: result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [],
+      atsKeywords: filterATSKeywords(result.structured?.atsKeywords ?? result.structured?.resume?.atsKeywords ?? [], jobDescription),
       resume,
       coverLetter,
       sessionId: result.sessionId,
