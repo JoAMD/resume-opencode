@@ -100,21 +100,32 @@ function filterATSKeywords(keywords: string[], jdText: string): string[] {
    - Remove static fields from COVER_LETTER_JSON_SCHEMA
    - Force `bodyParagraph` to array-only
    - Update `required` arrays
-   - Fix validation at line 1332 (currently checks `resume.name` — won't exist anymore)
+   - Fix validation: changed from checking `resume.name` to `resume.summary`
 
 2. **ATS keyword filtering** (`services/ai.ts`)
-   - Add `filterATSKeywords()` function
-   - Apply after model returns in `generateCombinedJSON()`
-   - Update prompt to say "verbatim from JD only"
+   - Add `filterATSKeywords()` function (exported for testing)
+   - Apply at atsKeywords extraction point in `generateCombinedJSON()`
+   - Updated prompt to say "verbatim from JD only"
 
 3. **Tests**
-   - Update existing tests in `ai.coverLetter.test.ts`, `ai.parseJson.test.ts`
-   - Add test for `filterATSKeywords()`
+   - `ai.coverLetter.test.ts` and `ai.parseJson.test.ts` needed no changes
+     (tests don't reference removed schema fields)
+   - Created `ai.filterATS.test.ts` with 5 test cases
 
-## Files to modify
+## Files modified
 
-- `services/ai.ts` — schema definitions, post-injection, keyword filter
+- `services/ai.ts` — schema definitions, validation fix, keyword filter
 - `prompts/combined-system-prompt.txt` — ATS keyword instruction (gitignored,
-  dual-commit to parent repo)
-- `services/ai.coverLetter.test.ts` — update schema expectations
-- `services/ai.parseJson.test.ts` — update schema expectations
+  dual-commit to parent repo, required `git add -f` in parent)
+- `docs/plans/STRUCTURED_OUTPUT_FAILURE_PLAN.md` — this file
+- `services/ai.filterATS.test.ts` — new test file for filterATSKeywords
+
+## Execution notes
+
+- Prompt commit in parent monorepo (`$HOME/src/copilot/`) required `git add -f`
+  because `resume-opencode/` is gitignored there. The `.gitignore` rule is
+  intentional (see `docs/IGNORED_FILES.md`) — force-add is correct for
+  tracked content within gitignored directories.
+- `filterATSKeywords` uses substring matching (not word-boundary). Edge case:
+  "react" matches "reaction". Accepted as rare enough — upgrade to regex
+  `\b${kw}\b` if false positives surface in production.
