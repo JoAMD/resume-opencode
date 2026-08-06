@@ -147,6 +147,11 @@ A change that touches a prompt or template is **two commits**, not one:
 1. **Parent monorepo** (`$HOME/src/copilot/`) — edit and commit
    `resume-opencode/prompts/<file>.txt` (or `resume-tool/templates/...`).
    The path is versioned there; it is the source of truth.
+   **Note:** The parent monorepo gitignores `resume-opencode/`, so you
+   must use `git add -f resume-opencode/prompts/<file>.txt` before
+   committing. This is expected — the `-f` is safe here because the
+   file is tracked in the parent; it's only ignored to prevent accidental
+   adds of build artifacts.
 2. **This repo** (`$HOME/src/copilot/resume-opencode/`) — commit the
    code, tests, and docs that consume the new prompt/template.
 
